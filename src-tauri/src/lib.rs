@@ -92,6 +92,7 @@ async fn stop_match(state: State<'_, AppState>) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState {
             current_arbiter: Arc::new(Mutex::new(None)),

@@ -17,6 +17,8 @@ mod tests {
             white: EngineConfig { name: "MockWhite".into(), path: path_str.clone(), options: vec![] },
             black: EngineConfig { name: "MockBlack".into(), path: path_str, options: vec![] },
             time_control: TimeControl { base_ms: 1000, inc_ms: 100 },
+            games_count: 2,
+            swap_sides: true,
         };
 
         let (game_tx, mut game_rx) = mpsc::channel(100);
