@@ -7,7 +7,7 @@ use crate::types::{MatchConfig, GameUpdate, EngineStats};
 pub mod arbiter;
 pub mod uci;
 pub mod types;
-pub mod mock_engine; // Not really needed as mod unless we use it, but keeping for now.
+pub mod mock_engine;
 
 #[cfg(test)]
 mod test_integration;
@@ -22,7 +22,6 @@ async fn start_match(
     state: State<'_, AppState>,
     config: MatchConfig
 ) -> Result<(), String> {
-    // Stop existing match if any
     let maybe_arbiter = {
         let mut arbiter_lock = state.current_arbiter.lock().unwrap();
         arbiter_lock.clone()
@@ -41,13 +40,11 @@ async fn start_match(
 
     let arbiter = Arc::new(arbiter);
 
-    // Store arbiter
     {
         let mut arbiter_lock = state.current_arbiter.lock().unwrap();
         *arbiter_lock = Some(arbiter.clone());
     }
 
-    // Spawn event listeners to forward to frontend
     let app_handle = app.clone();
     tokio::spawn(async move {
         while let Some(update) = game_rx.recv().await {
@@ -62,7 +59,6 @@ async fn start_match(
         }
     });
 
-    // Run match in background
     let arbiter_clone = arbiter.clone();
     tokio::spawn(async move {
         if let Err(e) = arbiter_clone.run_match().await {
@@ -88,6 +84,19 @@ async fn stop_match(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn pause_match(state: State<'_, AppState>, paused: bool) -> Result<(), String> {
+    let maybe_arbiter = {
+        let arbiter_lock = state.current_arbiter.lock().unwrap();
+        arbiter_lock.clone()
+    };
+
+    if let Some(arbiter) = maybe_arbiter {
+        arbiter.set_paused(paused).await;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -97,7 +106,7 @@ pub fn run() {
         .manage(AppState {
             current_arbiter: Arc::new(Mutex::new(None)),
         })
-        .invoke_handler(tauri::generate_handler![start_match, stop_match])
+        .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

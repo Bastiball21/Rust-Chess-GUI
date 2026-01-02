@@ -1,6 +1,6 @@
 use crate::uci::AsyncEngine;
 use crate::types::{MatchConfig, GameUpdate, EngineStats};
-use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci};
+use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode};
 use shakmaty::fen::Fen;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, Duration, sleep};
@@ -14,6 +14,7 @@ pub struct Arbiter {
     game_update_tx: mpsc::Sender<GameUpdate>,
     stats_tx: mpsc::Sender<EngineStats>,
     should_stop: Arc<Mutex<bool>>,
+    is_paused: Arc<Mutex<bool>>,
 }
 
 impl Arbiter {
@@ -22,16 +23,12 @@ impl Arbiter {
         game_update_tx: mpsc::Sender<GameUpdate>,
         stats_tx: mpsc::Sender<EngineStats>,
     ) -> anyhow::Result<Self> {
-        // Engine A corresponds to match_config.white initially
-        // Engine B corresponds to match_config.black initially
         let engine_a = AsyncEngine::spawn(&match_config.white.path).await?;
         let engine_b = AsyncEngine::spawn(&match_config.black.path).await?;
 
         let mut a_rx = engine_a.stdout_broadcast.subscribe();
         let mut b_rx = engine_b.stdout_broadcast.subscribe();
 
-        // Handle engine output in background for stats
-        // We always associate engine A with idx 0 and B with idx 1
         let stats_tx_clone = stats_tx.clone();
         tokio::spawn(async move {
             while let Ok(line) = a_rx.recv().await {
@@ -61,7 +58,12 @@ impl Arbiter {
             game_update_tx,
             stats_tx,
             should_stop: Arc::new(Mutex::new(false)),
+            is_paused: Arc::new(Mutex::new(false)),
         })
+    }
+
+    pub async fn set_paused(&self, paused: bool) {
+        *self.is_paused.lock().await = paused;
     }
 
     pub async fn run_match(&self) -> anyhow::Result<()> {
@@ -71,11 +73,6 @@ impl Arbiter {
             if *self.should_stop.lock().await {
                 break;
             }
-
-            // Determine white and black based on swap_sides
-            // If swap_sides is true:
-            // Game 1 (i=0): White=A, Black=B
-            // Game 2 (i=1): White=B, Black=A
             let (white_engine, black_engine, white_idx) = if self.match_config.swap_sides && i % 2 != 0 {
                 (&self.engine_b, &self.engine_a, 1)
             } else {
@@ -84,7 +81,6 @@ impl Arbiter {
 
             self.play_game(white_engine, black_engine, white_idx).await?;
 
-            // Optional: Pause between games
             sleep(Duration::from_millis(500)).await;
         }
 
@@ -92,7 +88,19 @@ impl Arbiter {
     }
 
     async fn play_game(&self, white_engine: &AsyncEngine, black_engine: &AsyncEngine, white_idx: usize) -> anyhow::Result<()> {
-        let mut pos = Chess::default();
+        // Load opening FEN if provided, else StartPos
+        let mut pos: Chess = if let Some(fen_str) = &self.match_config.opening_fen {
+            if !fen_str.trim().is_empty() {
+                Fen::from_ascii(fen_str.as_bytes())
+                    .ok()
+                    .and_then(|f| f.into_position(CastlingMode::Standard).ok())
+                    .unwrap_or_default()
+            } else {
+                Chess::default()
+            }
+        } else {
+            Chess::default()
+        };
 
         white_engine.send("uci".into()).await?;
         black_engine.send("uci".into()).await?;
@@ -112,8 +120,12 @@ impl Arbiter {
         let mut moves_history: Vec<String> = Vec::new();
 
         loop {
-            if *self.should_stop.lock().await {
-                break;
+            if *self.should_stop.lock().await { break; }
+
+            // Pause Check
+            if *self.is_paused.lock().await {
+                sleep(Duration::from_millis(100)).await;
+                continue;
             }
 
             if pos.is_game_over() {
@@ -142,7 +154,16 @@ impl Arbiter {
                 Color::Black => (black_engine, black_time, white_time),
             };
 
-            let mut pos_cmd = "position startpos moves".to_string();
+            let mut pos_cmd = if let Some(fen) = &self.match_config.opening_fen {
+                 if !fen.trim().is_empty() {
+                     format!("position fen {} moves", fen)
+                 } else {
+                     "position startpos moves".to_string()
+                 }
+            } else {
+                "position startpos moves".to_string()
+            };
+
             for m in &moves_history {
                 pos_cmd.push_str(" ");
                 pos_cmd.push_str(m);
@@ -151,7 +172,6 @@ impl Arbiter {
 
             let go_cmd = format!("go wtime {} btime {} winc {} binc {}", white_time, black_time, inc, inc);
 
-            // Subscribe BEFORE sending go to avoid missing fast responses
             let mut active_rx = active_engine.stdout_broadcast.subscribe();
 
             active_engine.send(go_cmd).await?;
@@ -159,8 +179,6 @@ impl Arbiter {
             let start = Instant::now();
             let mut best_move_str = String::new();
 
-            // Wait for bestmove
-            // TODO: Handle timeout if engine hangs
             while let Ok(line) = active_rx.recv().await {
                 if line.starts_with("bestmove") {
                     let parts: Vec<&str> = line.split_whitespace().collect();
@@ -177,14 +195,12 @@ impl Arbiter {
                 Color::Black => black_time = (black_time - elapsed).max(0) + inc,
             }
 
-            // Apply move
             let uci_move: Uci = best_move_str.parse().unwrap_or_else(|_| Uci::from_ascii(b"0000").unwrap());
             if let Ok(m) = uci_move.to_move(&pos) {
                 pos.play_unchecked(&m);
                 moves_history.push(best_move_str.clone());
             } else {
                  println!("Illegal move from engine: {}", best_move_str);
-                 // If illegal move, game over
                  self.game_update_tx.send(GameUpdate {
                     fen: Fen::from_position(pos.clone(), shakmaty::EnPassantMode::Legal).to_string(),
                     last_move: None,
@@ -192,7 +208,7 @@ impl Arbiter {
                     black_time: black_time as u64,
                     move_number: (moves_history.len() / 2 + 1) as u32,
                     result: Some(match turn {
-                        Color::White => "0-1", // White made illegal move
+                        Color::White => "0-1",
                         Color::Black => "1-0",
                     }.to_string()),
                     white_engine_idx: white_idx,
@@ -224,7 +240,7 @@ impl Arbiter {
 fn parse_info(line: &str, engine_idx: usize) -> Option<EngineStats> {
     let mut depth = 0;
     let mut nodes = 0;
-    let mut score_cp = None;
+    let mut score_cp = 0;
     let mut score_mate = None;
     let mut pv = String::new();
     let mut nps = 0;
@@ -240,7 +256,7 @@ fn parse_info(line: &str, engine_idx: usize) -> Option<EngineStats> {
                 if i+2 < parts.len() {
                     let kind = parts[i+1];
                     let val = parts[i+2].parse().unwrap_or(0);
-                    if kind == "cp" { score_cp = Some(val); }
+                    if kind == "cp" { score_cp = val; }
                     else if kind == "mate" { score_mate = Some(val); }
                     i += 2;
                 }
