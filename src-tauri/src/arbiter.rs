@@ -1,11 +1,14 @@
 use crate::uci::AsyncEngine;
 use crate::types::{MatchConfig, GameUpdate, EngineStats};
-use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode};
+use shakmaty::{Chess, Position, Color, uci::Uci, CastlingMode};
 use shakmaty::fen::Fen;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, Duration, sleep};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 pub struct Arbiter {
     engine_a: AsyncEngine,
@@ -15,6 +18,7 @@ pub struct Arbiter {
     stats_tx: mpsc::Sender<EngineStats>,
     should_stop: Arc<Mutex<bool>>,
     is_paused: Arc<Mutex<bool>>,
+    openings: Vec<String>,
 }
 
 impl Arbiter {
@@ -51,6 +55,27 @@ impl Arbiter {
             }
         });
 
+        // Load openings
+        let mut openings = Vec::new();
+        if let Some(path_str) = &match_config.opening_file {
+            if let Ok(loaded) = load_openings(path_str) {
+                openings = loaded;
+            } else {
+                 println!("Failed to load openings from {}", path_str);
+            }
+        }
+        if openings.is_empty() {
+             // Fallback to single FEN if provided
+             if let Some(fen) = &match_config.opening_fen {
+                 if !fen.trim().is_empty() {
+                    openings.push(fen.clone());
+                 }
+             }
+        }
+        if openings.is_empty() {
+             openings.push("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string());
+        }
+
         Ok(Self {
             engine_a,
             engine_b,
@@ -59,6 +84,7 @@ impl Arbiter {
             stats_tx,
             should_stop: Arc::new(Mutex::new(false)),
             is_paused: Arc::new(Mutex::new(false)),
+            openings,
         })
     }
 
@@ -68,6 +94,9 @@ impl Arbiter {
 
     pub async fn run_match(&self) -> anyhow::Result<()> {
         let games_count = self.match_config.games_count.max(1);
+
+        // Remove `rand::rng()` here to avoid Send issues, since we use sequential currently.
+        // If we want random later, we can create rng inside the loop or use a Send-safe rng.
 
         for i in 0..games_count {
             if *self.should_stop.lock().await {
@@ -79,7 +108,17 @@ impl Arbiter {
                 (&self.engine_a, &self.engine_b, 0)
             };
 
-            self.play_game(white_engine, black_engine, white_idx).await?;
+            // Select Opening
+            // If swap sides is true, we use the same opening for 2 games (0,1), (2,3) etc.
+            let opening_idx = if self.match_config.swap_sides {
+                (i / 2) as usize % self.openings.len()
+            } else {
+                i as usize % self.openings.len()
+            };
+
+            let fen = &self.openings[opening_idx];
+
+            self.play_game(white_engine, black_engine, white_idx, fen).await?;
 
             sleep(Duration::from_millis(500)).await;
         }
@@ -87,24 +126,23 @@ impl Arbiter {
         Ok(())
     }
 
-    async fn play_game(&self, white_engine: &AsyncEngine, black_engine: &AsyncEngine, white_idx: usize) -> anyhow::Result<()> {
-        // Load opening FEN if provided, else StartPos
-        let mut pos: Chess = if let Some(fen_str) = &self.match_config.opening_fen {
-            if !fen_str.trim().is_empty() {
-                Fen::from_ascii(fen_str.as_bytes())
-                    .ok()
-                    .and_then(|f| f.into_position(CastlingMode::Standard).ok())
-                    .unwrap_or_default()
-            } else {
-                Chess::default()
-            }
-        } else {
-            Chess::default()
-        };
+    async fn play_game(&self, white_engine: &AsyncEngine, black_engine: &AsyncEngine, white_idx: usize, fen: &str) -> anyhow::Result<()> {
+        let mut pos: Chess = Fen::from_ascii(fen.as_bytes())
+            .ok()
+            .and_then(|f| f.into_position(CastlingMode::Standard).ok())
+            .unwrap_or_default();
 
         white_engine.send("uci".into()).await?;
         black_engine.send("uci".into()).await?;
         sleep(Duration::from_millis(100)).await;
+
+        // Send Options
+        for (name, value) in &self.match_config.white.options {
+             white_engine.send(format!("setoption name {} value {}", name, value)).await?;
+        }
+        for (name, value) in &self.match_config.black.options {
+             black_engine.send(format!("setoption name {} value {}", name, value)).await?;
+        }
 
         white_engine.send("isready".into()).await?;
         black_engine.send("isready".into()).await?;
@@ -149,21 +187,14 @@ impl Arbiter {
             }
 
             let turn = pos.turn();
-            let (active_engine, time_left, other_time) = match turn {
+            let (active_engine, time_left, _other_time) = match turn {
                 Color::White => (white_engine, white_time, black_time),
                 Color::Black => (black_engine, black_time, white_time),
             };
 
-            let mut pos_cmd = if let Some(fen) = &self.match_config.opening_fen {
-                 if !fen.trim().is_empty() {
-                     format!("position fen {} moves", fen)
-                 } else {
-                     "position startpos moves".to_string()
-                 }
-            } else {
-                "position startpos moves".to_string()
-            };
+            // Use time_left to check for timeout? Engine handles it, but we update our tracking.
 
+            let mut pos_cmd = format!("position fen {} moves", fen);
             for m in &moves_history {
                 pos_cmd.push_str(" ");
                 pos_cmd.push_str(m);
@@ -194,6 +225,12 @@ impl Arbiter {
                 Color::White => white_time = (white_time - elapsed).max(0) + inc,
                 Color::Black => black_time = (black_time - elapsed).max(0) + inc,
             }
+
+            // Check if time ran out
+             if time_left - elapsed <= 0 {
+                  // Actually engine should flag falling, but we can enforce it too.
+                  // For now let's trust engine or just log.
+             }
 
             let uci_move: Uci = best_move_str.parse().unwrap_or_else(|_| Uci::from_ascii(b"0000").unwrap());
             if let Ok(m) = uci_move.to_move(&pos) {
@@ -235,6 +272,49 @@ impl Arbiter {
         let _ = self.engine_a.quit().await;
         let _ = self.engine_b.quit().await;
     }
+}
+
+fn load_openings(path_str: &str) -> anyhow::Result<Vec<String>> {
+    let path = Path::new(path_str);
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut fens = Vec::new();
+
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+
+    if ext == "epd" {
+        for line in reader.lines() {
+            let line = line?;
+            if !line.trim().is_empty() {
+                // Parse EPD
+                let clean = line.split(';').next().unwrap_or(&line).trim();
+                fens.push(clean.to_string());
+            }
+        }
+    } else if ext == "pgn" {
+        // Simple PGN parser: Look for [FEN "xxx"] tags.
+        for line in reader.lines() {
+            let line = line?;
+            if line.contains("[FEN \"") {
+                if let Some(start) = line.find("[FEN \"") {
+                     let sub = &line[start + 6..];
+                     if let Some(end) = sub.find("\"]") {
+                         fens.push(sub[..end].to_string());
+                     }
+                }
+            }
+        }
+    } else {
+        // Default treat as line-by-line FEN
+        for line in reader.lines() {
+             let line = line?;
+             if !line.trim().is_empty() {
+                 fens.push(line.trim().to_string());
+             }
+        }
+    }
+
+    Ok(fens)
 }
 
 fn parse_info(line: &str, engine_idx: usize) -> Option<EngineStats> {
