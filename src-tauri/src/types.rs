@@ -10,7 +10,7 @@ pub struct TimeControl {
 pub struct EngineConfig {
     pub name: String,
     pub path: String,
-    pub options: Vec<String>,
+    pub options: Vec<(String, String)>, // Changed to Key-Value pairs
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +21,7 @@ pub struct MatchConfig {
     pub games_count: u32,
     pub swap_sides: bool,
     pub opening_fen: Option<String>,
+    pub opening_file: Option<String>, // Path to .epd or .pgn
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

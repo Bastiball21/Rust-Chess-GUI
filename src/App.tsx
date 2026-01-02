@@ -27,6 +27,11 @@ interface EngineStats {
   pv: string;
 }
 
+interface EngineOption {
+    name: string;
+    value: string;
+}
+
 function App() {
   const [fen, setFen] = useState("start");
   const [lastMove, setLastMove] = useState<string[]>([]);
@@ -45,10 +50,20 @@ function App() {
 
   // New Settings
   const [openingFen, setOpeningFen] = useState("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-  const [baseTime, setBaseTime] = useState(10000); // ms
-  const [increment, setIncrement] = useState(100); // ms
+  const [openingFile, setOpeningFile] = useState<string | null>(null);
+
+  const [baseTimeMin, setBaseTimeMin] = useState(1);
+  const [baseTimeSec, setBaseTimeSec] = useState(0);
+  const [incSec, setIncSec] = useState(1);
+
   const [isPaused, setIsPaused] = useState(false);
   const [matchRunning, setMatchRunning] = useState(false);
+
+  // Engine Options & Modal
+  const [showOptionsModal, setShowOptionsModal] = useState<number | null>(null); // 0 for A, 1 for B
+  const [engineAOptions, setEngineAOptions] = useState<EngineOption[]>([]);
+  const [engineBOptions, setEngineBOptions] = useState<EngineOption[]>([]);
+  const [syzygyPath, setSyzygyPath] = useState("");
 
   const [store, setStore] = useState<any>(null);
 
@@ -134,13 +149,26 @@ function App() {
     setMatchRunning(true);
     setIsPaused(false);
 
+    // Prepare Options
+    const optsA = [...engineAOptions.map(o => [o.name, o.value])];
+    const optsB = [...engineBOptions.map(o => [o.name, o.value])];
+
+    if (syzygyPath) {
+        optsA.push(["SyzygyPath", syzygyPath]);
+        optsB.push(["SyzygyPath", syzygyPath]);
+    }
+
+    const baseMs = (baseTimeMin * 60 + baseTimeSec) * 1000;
+    const incMs = incSec * 1000;
+
     const config = {
-      white: { name: "Engine A", path: whitePath, options: [] },
-      black: { name: "Engine B", path: blackPath, options: [] },
-      time_control: { base_ms: baseTime, inc_ms: increment },
+      white: { name: "Engine A", path: whitePath, options: optsA },
+      black: { name: "Engine B", path: blackPath, options: optsB },
+      time_control: { base_ms: baseMs, inc_ms: incMs },
       games_count: gamesCount,
       swap_sides: swapSides,
-      opening_fen: openingFen // Send the custom opening
+      opening_fen: openingFile ? null : openingFen,
+      opening_file: openingFile
     };
     await invoke("start_match", { config });
   };
@@ -155,13 +183,66 @@ function App() {
     setIsPaused(!isPaused);
   };
 
-  const selectFile = async (setter: (p: string) => void) => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
+  const selectFile = async (setter: (p: string) => void, filters: any[] = []) => {
+    const selected = await open({ multiple: false, filters });
     if (selected && typeof selected === 'string') setter(selected);
   };
 
+  const addOption = (idx: number) => {
+      if (idx === 0) setEngineAOptions([...engineAOptions, { name: "", value: "" }]);
+      else setEngineBOptions([...engineBOptions, { name: "", value: "" }]);
+  };
+
+  const updateOption = (idx: number, optIdx: number, field: 'name' | 'value', val: string) => {
+      if (idx === 0) {
+          const newOpts = [...engineAOptions];
+          newOpts[optIdx][field] = val;
+          setEngineAOptions(newOpts);
+      } else {
+          const newOpts = [...engineBOptions];
+          newOpts[optIdx][field] = val;
+          setEngineBOptions(newOpts);
+      }
+  };
+
+  const removeOption = (idx: number, optIdx: number) => {
+      if (idx === 0) {
+          setEngineAOptions(engineAOptions.filter((_, i) => i !== optIdx));
+      } else {
+          setEngineBOptions(engineBOptions.filter((_, i) => i !== optIdx));
+      }
+  };
+
   return (
-    <div className="flex h-screen w-screen bg-gray-950 text-white overflow-hidden font-sans select-none">
+    <div className="flex h-screen w-screen bg-gray-950 text-white overflow-hidden font-sans select-none relative">
+      {/* Modal */}
+      {showOptionsModal !== null && (
+          <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-8">
+              <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-lg shadow-2xl">
+                  <h3 className="text-xl font-bold mb-4 text-blue-400">
+                      Configure Engine {showOptionsModal === 0 ? "A" : "B"}
+                  </h3>
+                  <div className="space-y-2 mb-4 max-h-[60vh] overflow-y-auto">
+                      {(showOptionsModal === 0 ? engineAOptions : engineBOptions).map((opt, i) => (
+                          <div key={i} className="flex gap-2">
+                              <input placeholder="Option Name" className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
+                                  value={opt.name} onChange={e => updateOption(showOptionsModal, i, 'name', e.target.value)} />
+                              <input placeholder="Value" className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
+                                  value={opt.value} onChange={e => updateOption(showOptionsModal, i, 'value', e.target.value)} />
+                              <button onClick={() => removeOption(showOptionsModal, i)} className="text-red-500 hover:text-red-400 px-2 font-bold">X</button>
+                          </div>
+                      ))}
+                      <button onClick={() => addOption(showOptionsModal)} className="w-full py-2 border-2 border-dashed border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-400 rounded text-sm font-bold">
+                          + Add Option
+                      </button>
+                  </div>
+                  <div className="flex justify-end">
+                      <button onClick={() => setShowOptionsModal(null)} className="bg-blue-600 px-6 py-2 rounded text-sm font-bold">Done</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Left: Engines */}
       <div className="w-80 flex flex-col border-r border-gray-700 bg-gray-900">
         <div className="p-2 bg-gray-950 text-center font-bold text-gray-500 text-xs uppercase tracking-wider">
@@ -196,34 +277,69 @@ function App() {
           <div className="space-y-2">
             <div className="flex gap-2 items-center">
               <span className="w-8 text-xs font-bold text-gray-500">A</span>
-              <input value={whitePath} onChange={e => setWhitePath(e.target.value)} className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono" />
-              <button onClick={() => selectFile(setWhitePath)} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-xs">...</button>
+              <div className="flex-1 flex gap-1">
+                  <input value={whitePath} readOnly className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono truncate" />
+                  <button onClick={() => setShowOptionsModal(0)} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-xs">⚙️</button>
+              </div>
+              <button onClick={() => selectFile(setWhitePath, [{name:'Executables', extensions:['exe','']}])} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-xs">...</button>
             </div>
             <div className="flex gap-2 items-center">
               <span className="w-8 text-xs font-bold text-gray-500">B</span>
-              <input value={blackPath} onChange={e => setBlackPath(e.target.value)} className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono" />
-              <button onClick={() => selectFile(setBlackPath)} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-xs">...</button>
+              <div className="flex-1 flex gap-1">
+                  <input value={blackPath} readOnly className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono truncate" />
+                   <button onClick={() => setShowOptionsModal(1)} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-xs">⚙️</button>
+              </div>
+              <button onClick={() => selectFile(setBlackPath, [{name:'Executables', extensions:['exe','']}])} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-xs">...</button>
             </div>
           </div>
+
+          {/* Adjudication (TB) */}
+           <div className="bg-gray-800/50 p-3 rounded-lg space-y-2">
+              <label className="text-xs text-gray-500 uppercase font-bold">Tablebase (Adjudication)</label>
+              <div className="flex gap-2">
+                   <input value={syzygyPath} onChange={e => setSyzygyPath(e.target.value)} placeholder="Path to Syzygy folder" className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs" />
+                   <button onClick={() => selectFile(setSyzygyPath, [])} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-xs">...</button>
+              </div>
+           </div>
+
           {/* Time Control */}
           <div className="bg-gray-800/50 p-3 rounded-lg space-y-2">
-            <label className="text-xs text-gray-500 uppercase font-bold">Time Control (ms)</label>
+            <label className="text-xs text-gray-500 uppercase font-bold">Time Control</label>
             <div className="flex gap-2">
               <div className="flex-1">
-                <span className="text-xs text-gray-400 block">Base</span>
-                <input type="number" value={baseTime} onChange={e => setBaseTime(parseInt(e.target.value))} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm" />
+                <span className="text-xs text-gray-400 block">Base (Min)</span>
+                <input type="number" value={baseTimeMin} onChange={e => setBaseTimeMin(parseInt(e.target.value) || 0)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm" />
               </div>
               <div className="flex-1">
-                <span className="text-xs text-gray-400 block">Inc</span>
-                <input type="number" value={increment} onChange={e => setIncrement(parseInt(e.target.value))} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm" />
+                <span className="text-xs text-gray-400 block">Base (Sec)</span>
+                <input type="number" value={baseTimeSec} onChange={e => setBaseTimeSec(parseInt(e.target.value) || 0)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm" />
+              </div>
+              <div className="flex-1">
+                <span className="text-xs text-gray-400 block">Inc (Sec)</span>
+                <input type="number" value={incSec} onChange={e => setIncSec(parseInt(e.target.value) || 0)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm" />
               </div>
             </div>
           </div>
           {/* Opening & Games */}
           <div className="space-y-2">
             <div>
-              <label className="text-xs text-gray-500 uppercase font-bold">Opening FEN</label>
-              <input value={openingFen} onChange={e => setOpeningFen(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono" />
+              <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-500 uppercase font-bold">Opening</label>
+                  <div className="text-xs space-x-2">
+                      <span className={`cursor-pointer ${!openingFile ? 'text-blue-400 font-bold' : 'text-gray-600'}`} onClick={() => setOpeningFile(null)}>FEN</span>
+                      <span className="text-gray-700">|</span>
+                      <span className={`cursor-pointer ${openingFile ? 'text-blue-400 font-bold' : 'text-gray-600'}`} onClick={() => selectFile(setOpeningFile, [{name:'Opening', extensions:['epd', 'pgn']}])}>FILE</span>
+                  </div>
+              </div>
+
+              {!openingFile ? (
+                   <input value={openingFen} onChange={e => setOpeningFen(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono" placeholder="Paste FEN here..." />
+              ) : (
+                  <div className="flex gap-2">
+                      <input value={openingFile} readOnly className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono truncate text-gray-400" />
+                      <button onClick={() => setOpeningFile(null)} className="text-red-500 font-bold px-2">X</button>
+                  </div>
+              )}
             </div>
             <div className="flex gap-4 pt-2">
               <div className="flex-1">
