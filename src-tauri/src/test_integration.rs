@@ -20,7 +20,7 @@ mod tests {
             games_count: 2,
             swap_sides: true,
             opening_fen: None,
-            opening_file: None,
+            variant: "standard".to_string(),
         };
 
         let (game_tx, mut game_rx) = mpsc::channel(100);
