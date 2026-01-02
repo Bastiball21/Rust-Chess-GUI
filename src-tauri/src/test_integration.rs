@@ -19,6 +19,7 @@ mod tests {
             time_control: TimeControl { base_ms: 1000, inc_ms: 100 },
             games_count: 2,
             swap_sides: true,
+            opening_fen: None,
         };
 
         let (game_tx, mut game_rx) = mpsc::channel(100);
