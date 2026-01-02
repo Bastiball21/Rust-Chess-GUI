@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+default-run = "mini-tcec"  # <--- THIS WAS MISSING
 
 [lib]
 name = "mini_tcec_lib"
