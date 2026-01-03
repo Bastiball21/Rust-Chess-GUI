@@ -11,6 +11,7 @@ pub struct MatchConfig {
     pub games_count: u32,
     pub swap_sides: bool,
     pub opening_fen: Option<String>,
+    pub opening_file: Option<String>,
     pub variant: String,
 }
 

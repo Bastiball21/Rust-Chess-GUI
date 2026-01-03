@@ -42,9 +42,19 @@ function App() {
   const [gamesCount, setGamesCount] = useState(10);
   const [swapSides, setSwapSides] = useState(true);
   const [openingFen, setOpeningFen] = useState("");
+  const [openingFile, setOpeningFile] = useState("");
+  const [openingMode, setOpeningMode] = useState<'fen' | 'file'>('fen');
   const [variant, setVariant] = useState("standard");
-  const [baseTime, setBaseTime] = useState(10000);
-  const [increment, setIncrement] = useState(100);
+
+  // Time Control State (H, M, S)
+  const [baseH, setBaseH] = useState(0);
+  const [baseM, setBaseM] = useState(1);
+  const [baseS, setBaseS] = useState(0);
+
+  const [incH, setIncH] = useState(0);
+  const [incM, setIncM] = useState(0);
+  const [incS, setIncS] = useState(1);
+
   const [isPaused, setIsPaused] = useState(false);
   const [matchRunning, setMatchRunning] = useState(false);
   const [store, setStore] = useState<any>(null);
@@ -109,13 +119,18 @@ function App() {
 
   const startMatch = async () => {
     setMoves([]); setMatchResult(null); setMatchRunning(true); setIsPaused(false);
+
+    const baseMs = (baseH * 3600 + baseM * 60 + baseS) * 1000;
+    const incMs = (incH * 3600 + incM * 60 + incS) * 1000;
+
     const config = {
       white: { name: "Engine A", path: whitePath, options: [] },
       black: { name: "Engine B", path: blackPath, options: [] },
-      time_control: { base_ms: baseTime, inc_ms: increment },
+      time_control: { base_ms: baseMs, inc_ms: incMs },
       games_count: gamesCount,
       swap_sides: swapSides,
-      opening_fen: openingFen || null,
+      opening_fen: (openingMode === 'fen' && openingFen) ? openingFen : null,
+      opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
       variant: variant
     };
     await invoke("start_match", { config });
@@ -126,6 +141,11 @@ function App() {
   const selectFile = async (setter: (p: string) => void) => {
     const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
     if (selected && typeof selected === 'string') setter(selected);
+  };
+
+  const selectOpeningFile = async () => {
+    const selected = await open({ multiple: false, filters: [{ name: 'Openings', extensions: ['epd', 'pgn'] }] });
+    if (selected && typeof selected === 'string') setOpeningFile(selected);
   };
 
   return (
@@ -150,14 +170,30 @@ function App() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-           <div>
-              <label className="text-xs font-semibold text-gray-400 uppercase">Time (ms)</label>
-              <input type="number" className="bg-gray-700 p-2 rounded w-full text-xs" value={baseTime} onChange={(e) => setBaseTime(parseInt(e.target.value))} />
-           </div>
-           <div>
-              <label className="text-xs font-semibold text-gray-400 uppercase">Inc (ms)</label>
-              <input type="number" className="bg-gray-700 p-2 rounded w-full text-xs" value={increment} onChange={(e) => setIncrement(parseInt(e.target.value))} />
+        {/* Time Control */}
+        <div className="space-y-2">
+           <label className="text-xs font-semibold text-gray-400 uppercase">Time Control</label>
+           <div className="grid grid-cols-2 gap-4">
+              <div>
+                <span className="text-[10px] text-gray-500 block mb-1">Base (H:M:S)</span>
+                <div className="flex gap-1">
+                   <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="H" value={baseH} onChange={(e) => setBaseH(parseInt(e.target.value) || 0)} />
+                   <span className="text-gray-500 self-center">:</span>
+                   <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="M" value={baseM} onChange={(e) => setBaseM(parseInt(e.target.value) || 0)} />
+                   <span className="text-gray-500 self-center">:</span>
+                   <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="S" value={baseS} onChange={(e) => setBaseS(parseInt(e.target.value) || 0)} />
+                </div>
+              </div>
+              <div>
+                <span className="text-[10px] text-gray-500 block mb-1">Inc (H:M:S)</span>
+                <div className="flex gap-1">
+                   <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="H" value={incH} onChange={(e) => setIncH(parseInt(e.target.value) || 0)} />
+                   <span className="text-gray-500 self-center">:</span>
+                   <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="M" value={incM} onChange={(e) => setIncM(parseInt(e.target.value) || 0)} />
+                   <span className="text-gray-500 self-center">:</span>
+                   <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="S" value={incS} onChange={(e) => setIncS(parseInt(e.target.value) || 0)} />
+                </div>
+              </div>
            </div>
         </div>
 
@@ -169,9 +205,24 @@ function App() {
            </select>
         </div>
 
+        {/* Opening Selection */}
         <div className="space-y-2">
-           <label className="text-xs font-semibold text-gray-400 uppercase">Opening FEN (Optional)</label>
-           <input className="bg-gray-700 p-2 rounded w-full text-xs" placeholder="Leave empty for start pos / random 960" value={openingFen} onChange={(e) => setOpeningFen(e.target.value)} />
+           <div className="flex justify-between items-center">
+             <label className="text-xs font-semibold text-gray-400 uppercase">Opening</label>
+             <div className="flex bg-gray-700 rounded p-0.5">
+               <button className={`px-2 py-0.5 text-[10px] rounded ${openingMode === 'fen' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`} onClick={() => setOpeningMode('fen')}>FEN</button>
+               <button className={`px-2 py-0.5 text-[10px] rounded ${openingMode === 'file' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`} onClick={() => setOpeningMode('file')}>FILE</button>
+             </div>
+           </div>
+
+           {openingMode === 'fen' ? (
+             <input className="bg-gray-700 p-2 rounded w-full text-xs" placeholder="Leave empty for start pos / random 960" value={openingFen} onChange={(e) => setOpeningFen(e.target.value)} />
+           ) : (
+             <div className="flex gap-2">
+               <input className="bg-gray-700 p-2 rounded w-full text-xs" placeholder="Select .epd or .pgn..." value={openingFile} readOnly />
+               <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500 text-xs" onClick={selectOpeningFile}>...</button>
+             </div>
+           )}
         </div>
 
         <div className="grid grid-cols-2 gap-2">

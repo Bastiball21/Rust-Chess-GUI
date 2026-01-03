@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
+use std::io::BufRead;
 
 enum Board {
     Standard(Chess),
@@ -31,6 +32,7 @@ pub struct Arbiter {
     engine_a: AsyncEngine, engine_b: AsyncEngine, match_config: MatchConfig,
     game_update_tx: mpsc::Sender<GameUpdate>, stats_tx: mpsc::Sender<EngineStats>,
     should_stop: Arc<Mutex<bool>>, is_paused: Arc<Mutex<bool>>,
+    openings: Vec<String>,
 }
 
 impl Arbiter {
@@ -41,6 +43,12 @@ impl Arbiter {
             engine_a.send("setoption name UCI_Chess960 value true".into()).await?;
             engine_b.send("setoption name UCI_Chess960 value true".into()).await?;
         }
+
+        let mut openings = Vec::new();
+        if let Some(ref path) = match_config.opening_file {
+            openings = load_openings(path).unwrap_or_default();
+        }
+
         let mut a_rx = engine_a.stdout_broadcast.subscribe();
         let mut b_rx = engine_b.stdout_broadcast.subscribe();
         let stats_tx_clone = stats_tx.clone();
@@ -55,7 +63,7 @@ impl Arbiter {
                 if line.starts_with("info") { if let Some(stats) = parse_info(&line, 1) { let _ = stats_tx_clone2.send(stats).await; } }
             }
         });
-        Ok(Self { engine_a, engine_b, match_config, game_update_tx, stats_tx, should_stop: Arc::new(Mutex::new(false)), is_paused: Arc::new(Mutex::new(false)) })
+        Ok(Self { engine_a, engine_b, match_config, game_update_tx, stats_tx, should_stop: Arc::new(Mutex::new(false)), is_paused: Arc::new(Mutex::new(false)), openings })
     }
 
     pub async fn set_paused(&self, paused: bool) { *self.is_paused.lock().await = paused; }
@@ -68,9 +76,15 @@ impl Arbiter {
                 (&self.engine_b, &self.engine_a, 1)
             } else { (&self.engine_a, &self.engine_b, 0) };
 
-            let start_fen = if let Some(ref f) = self.match_config.opening_fen {
+            let start_fen = if !self.openings.is_empty() {
+                // Use opening from file: cycle through list (change every 2 games if swap sides is on)
+                let idx = if self.match_config.swap_sides { (i / 2) as usize } else { i as usize };
+                self.openings[idx % self.openings.len()].clone()
+            } else if let Some(ref f) = self.match_config.opening_fen {
                 if !f.trim().is_empty() { f.clone() } else { self.generate_start_fen() }
-            } else { self.generate_start_fen() };
+            } else {
+                self.generate_start_fen()
+            };
 
             self.play_game(white_engine, black_engine, white_idx, &start_fen).await?;
             sleep(Duration::from_millis(500)).await;
@@ -194,6 +208,32 @@ impl Arbiter {
     }
     pub async fn stop(&self) { *self.should_stop.lock().await = true; let _ = self.engine_a.quit().await; let _ = self.engine_b.quit().await; }
 
+}
+
+fn load_openings(path: &str) -> Option<Vec<String>> {
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let mut fens = Vec::new();
+    let is_pgn = path.ends_with(".pgn");
+
+    for line_res in reader.lines() {
+        if let Ok(line) = line_res {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            if is_pgn {
+                // Simple PGN FEN extraction
+                if line.starts_with("[FEN \"") && line.ends_with("\"]") {
+                    let fen = &line[6..line.len()-2];
+                    fens.push(fen.to_string());
+                }
+            } else {
+                // Assume EPD: take everything before first " ;" or just the whole line if clean
+                let parts: Vec<&str> = line.split(';').collect();
+                fens.push(parts[0].trim().to_string());
+            }
+        }
+    }
+    if fens.is_empty() { None } else { Some(fens) }
 }
 
 fn parse_info(line: &str, engine_idx: usize) -> Option<EngineStats> {
