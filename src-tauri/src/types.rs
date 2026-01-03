@@ -20,6 +20,7 @@ pub struct TournamentConfig {
     pub opening_fen: Option<String>,
     pub opening_file: Option<String>,
     pub variant: String,
+    pub concurrency: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
