@@ -16,6 +16,7 @@ interface GameUpdate {
   move_number: number;
   result: string | null;
   white_engine_idx: number;
+  black_engine_idx: number;
 }
 
 interface EngineStats {
@@ -27,18 +28,32 @@ interface EngineStats {
   pv: string;
 }
 
+interface EngineConfig {
+  name: string;
+  path: string;
+  options: [string, string][];
+}
+
 function App() {
   const [fen, setFen] = useState("start");
   const [lastMove, setLastMove] = useState<string[]>([]);
   const [moves, setMoves] = useState<string[]>([]);
-  const [engineAStats, setEngineAStats] = useState({ name: "Engine A", score: 0 });
-  const [engineBStats, setEngineBStats] = useState({ name: "Engine B", score: 0 });
+  // We keep stats for the currently active white/black engines for display
+  const [activeWhiteStats, setActiveWhiteStats] = useState({ name: "White", score: 0 });
+  const [activeBlackStats, setActiveBlackStats] = useState({ name: "Black", score: 0 });
   const [whiteEngineIdx, setWhiteEngineIdx] = useState(0);
+  const [blackEngineIdx, setBlackEngineIdx] = useState(1);
+
   const [evalHistory, setEvalHistory] = useState<any[]>([]);
   const [matchResult, setMatchResult] = useState<string | null>(null);
-  // Settings
-  const [whitePath, setWhitePath] = useState("mock-engine");
-  const [blackPath, setBlackPath] = useState("mock-engine");
+
+  // Tournament Settings
+  const [tournamentMode, setTournamentMode] = useState<"Match" | "RoundRobin" | "Gauntlet">("Match");
+  const [engines, setEngines] = useState<EngineConfig[]>([
+      { name: "Engine 1", path: "mock-engine", options: [] },
+      { name: "Engine 2", path: "mock-engine", options: [] }
+  ]);
+
   const [gamesCount, setGamesCount] = useState(10);
   const [swapSides, setSwapSides] = useState(true);
   const [openingFen, setOpeningFen] = useState("");
@@ -63,19 +78,19 @@ function App() {
     const initStore = async () => {
       const s = await load('settings.json');
       setStore(s);
-      const w = await s.get("engine_a_path");
-      const b = await s.get("engine_b_path");
-      if (w) setWhitePath(w as string);
-      if (b) setBlackPath(b as string);
+      // Load saved engines if any
+      const savedEngines = await s.get("engines");
+      if (savedEngines) {
+         setEngines(savedEngines as EngineConfig[]);
+      }
     };
     initStore();
   }, []);
 
   useEffect(() => {
     if (!store) return;
-    store.set("engine_a_path", whitePath).then(() => store.save());
-    store.set("engine_b_path", blackPath).then(() => store.save());
-  }, [whitePath, blackPath, store]);
+    store.set("engines", engines).then(() => store.save());
+  }, [engines, store]);
 
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
@@ -88,34 +103,63 @@ function App() {
         setMoves(prev => [...prev, u.last_move!]);
       }
       setWhiteEngineIdx(u.white_engine_idx);
-      if (u.white_engine_idx === 0) {
-        setEngineAStats((s: any) => ({ ...s, time: u.white_time }));
-        setEngineBStats((s: any) => ({ ...s, time: u.black_time }));
-      } else {
-        setEngineBStats((s: any) => ({ ...s, time: u.white_time }));
-        setEngineAStats((s: any) => ({ ...s, time: u.black_time }));
-      }
+      setBlackEngineIdx(u.black_engine_idx);
+
+      // Update names
+      const whiteName = engines[u.white_engine_idx]?.name || `Engine ${u.white_engine_idx}`;
+      const blackName = engines[u.black_engine_idx]?.name || `Engine ${u.black_engine_idx}`;
+
+      setActiveWhiteStats((s: any) => ({ ...s, name: whiteName, time: u.white_time }));
+      setActiveBlackStats((s: any) => ({ ...s, name: blackName, time: u.black_time }));
+
       if (u.result) setMatchResult(`Game Over: ${u.result}`);
     });
+
     const unlistenStats = listen("engine-stats", (event: any) => {
       const s = event.payload;
       const update = { depth: s.depth, score: s.score_cp, nodes: s.nodes, nps: s.nps, pv: s.pv };
-      s.engine_idx === 0 ? setEngineAStats((p:any) => ({...p, ...update})) : setEngineBStats((p:any) => ({...p, ...update}));
+
+      // Update stats based on which engine sent it
+      // We check if the sender is currently White or Black
+      // Note: whiteEngineIdx and blackEngineIdx state might lag slightly behind event stream if rapid updates,
+      // but usually fine. For more robustness, we could track active indices in a ref.
+
+      // However, we can't easily know who is white inside this callback without access to fresh state or GameUpdate context.
+      // But we can assume the UI updates `activeWhiteStats` when `engine_idx` matches `whiteEngineIdx`.
+
+      setWhiteEngineIdx(currWhite => {
+          if (currWhite === s.engine_idx) {
+             setActiveWhiteStats(prev => ({...prev, ...update}));
+          }
+          return currWhite;
+      });
+      setBlackEngineIdx(currBlack => {
+          if (currBlack === s.engine_idx) {
+             setActiveBlackStats(prev => ({...prev, ...update}));
+          }
+          return currBlack;
+      });
     });
     return () => { unlistenUpdate.then(f => f()); unlistenStats.then(f => f()); };
-  }, []);
+  }, [engines]); // Re-bind if engines list changes (though usually locked during match)
 
   useEffect(() => {
     if (moves.length > 0) {
       let score = 0;
       const whiteMoved = moves.length % 2 !== 0;
-      if (whiteMoved) score = (whiteEngineIdx === 0) ? engineAStats.score : engineBStats.score;
-      else score = -((whiteEngineIdx === 0) ? engineBStats.score : engineAStats.score);
+      // Evaluate from white's perspective usually
+      // If white just moved, the score is from white's perspective (if reported by white engine).
+      // Wait, usually the engine thinking reports the score for itself.
+      // If it's White's turn, White is thinking.
+      // The score is activeWhiteStats.score.
+
+      // For history, we just want White's advantage.
+      score = activeWhiteStats.score;
       setEvalHistory(prev => [...prev, { moveNumber: moves.length, score: score || 0 }]);
     } else {
       setEvalHistory([]);
     }
-  }, [moves, whiteEngineIdx]);
+  }, [moves, activeWhiteStats.score]);
 
   const startMatch = async () => {
     setMoves([]); setMatchResult(null); setMatchRunning(true); setIsPaused(false);
@@ -124,8 +168,8 @@ function App() {
     const incMs = Math.round((incH * 3600 + incM * 60 + incS) * 1000);
 
     const config = {
-      white: { name: "Engine A", path: whitePath, options: [] },
-      black: { name: "Engine B", path: blackPath, options: [] },
+      mode: tournamentMode,
+      engines: engines,
       time_control: { base_ms: baseMs, inc_ms: incMs },
       games_count: gamesCount,
       swap_sides: swapSides,
@@ -138,9 +182,27 @@ function App() {
 
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
   const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
-  const selectFile = async (setter: (p: string) => void) => {
+
+  const addEngine = () => {
+      setEngines([...engines, { name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]);
+  };
+
+  const removeEngine = (idx: number) => {
+      if (engines.length <= 2) return; // Minimum 2 engines
+      const newEngines = [...engines];
+      newEngines.splice(idx, 1);
+      setEngines(newEngines);
+  };
+
+  const updateEnginePath = (idx: number, path: string) => {
+      const newEngines = [...engines];
+      newEngines[idx].path = path;
+      setEngines(newEngines);
+  };
+
+  const selectFileForEngine = async (idx: number) => {
     const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
-    if (selected && typeof selected === 'string') setter(selected);
+    if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
   };
 
   const selectOpeningFile = async () => {
@@ -154,19 +216,35 @@ function App() {
       <div className="w-80 bg-gray-800 p-4 flex flex-col gap-4 border-r border-gray-700 overflow-y-auto">
         <h1 className="text-xl font-bold text-center text-blue-400">Mini-TCEC</h1>
 
+        {/* Tournament Mode */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-gray-400 uppercase">Engine A (White start)</label>
-          <div className="flex gap-2">
-            <input className="bg-gray-700 p-2 rounded w-full text-xs" value={whitePath} onChange={(e) => setWhitePath(e.target.value)} />
-            <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500 text-xs" onClick={() => selectFile(setWhitePath)}>...</button>
-          </div>
+           <label className="text-xs font-semibold text-gray-400 uppercase">Tournament Mode</label>
+           <select className="bg-gray-700 p-2 rounded w-full text-xs" value={tournamentMode} onChange={(e) => setTournamentMode(e.target.value as any)}>
+             <option value="Match">Match (1v1)</option>
+             <option value="RoundRobin">Round Robin</option>
+             <option value="Gauntlet">Gauntlet</option>
+           </select>
         </div>
 
+        {/* Engine List */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-gray-400 uppercase">Engine B (Black start)</label>
-          <div className="flex gap-2">
-            <input className="bg-gray-700 p-2 rounded w-full text-xs" value={blackPath} onChange={(e) => setBlackPath(e.target.value)} />
-            <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500 text-xs" onClick={() => selectFile(setBlackPath)}>...</button>
+          <div className="flex justify-between items-center">
+             <label className="text-xs font-semibold text-gray-400 uppercase">Engines ({engines.length})</label>
+             <button className="bg-green-600 px-2 py-0.5 rounded text-[10px] hover:bg-green-500" onClick={addEngine}>+ ADD</button>
+          </div>
+          <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+             {engines.map((eng, idx) => (
+                <div key={idx} className="bg-gray-700 p-2 rounded flex flex-col gap-1">
+                   <div className="flex justify-between">
+                      <span className="text-xs font-bold">{eng.name}</span>
+                      {engines.length > 2 && <button className="text-red-400 text-xs hover:text-red-300" onClick={() => removeEngine(idx)}>X</button>}
+                   </div>
+                   <div className="flex gap-1">
+                      <input className="bg-gray-600 p-1 rounded w-full text-[10px]" value={eng.path} onChange={(e) => updateEnginePath(idx, e.target.value)} title={eng.path} />
+                      <button className="bg-blue-600 px-2 rounded hover:bg-blue-500 text-[10px]" onClick={() => selectFileForEngine(idx)}>...</button>
+                   </div>
+                </div>
+             ))}
           </div>
         </div>
 
@@ -231,14 +309,14 @@ function App() {
               <span className="text-sm">Swap Sides</span>
            </div>
            <div className="flex items-center gap-2">
-              <span className="text-sm">Games:</span>
+              <span className="text-sm">Games/Pair:</span>
               <input type="number" className="bg-gray-700 p-1 rounded w-16 text-xs" value={gamesCount} onChange={(e) => setGamesCount(parseInt(e.target.value))} />
            </div>
         </div>
 
         <div className="flex flex-col gap-2 mt-auto">
           {!matchRunning ? (
-            <button className="bg-green-600 p-3 rounded font-bold hover:bg-green-500 transition" onClick={startMatch}>START MATCH</button>
+            <button className="bg-green-600 p-3 rounded font-bold hover:bg-green-500 transition" onClick={startMatch}>START TOURNAMENT</button>
           ) : (
             <div className="flex gap-2">
                <button className={`flex-1 p-3 rounded font-bold transition ${isPaused ? 'bg-yellow-600 hover:bg-yellow-500' : 'bg-gray-600 hover:bg-gray-500'}`} onClick={togglePause}>
@@ -255,13 +333,12 @@ function App() {
         {/* Top Panels */}
         <div className="grid grid-cols-3 gap-4 h-full min-h-0">
 
-          {/* Left: Engine A Info */}
+          {/* Left: Engine A Info (Currently active White) */}
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg">
-             <EnginePanel stats={engineAStats} />
+             <EnginePanel stats={activeWhiteStats} />
              <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-green-400">
                {/* Engine Log Placeholder */}
-               <div>[Engine A] readyok</div>
-               <div>[Engine A] info depth 10 score cp 25</div>
+               <div>[{activeWhiteStats.name}] readyok</div>
              </div>
           </div>
 
@@ -273,13 +350,12 @@ function App() {
              <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true } }} />
           </div>
 
-          {/* Right: Engine B Info */}
+          {/* Right: Engine B Info (Currently active Black) */}
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg">
-             <EnginePanel stats={engineBStats} />
+             <EnginePanel stats={activeBlackStats} />
              <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-blue-400">
                 {/* Engine Log Placeholder */}
-                <div>[Engine B] readyok</div>
-                <div>[Engine B] info depth 9 score cp -10</div>
+                <div>[{activeBlackStats.name}] readyok</div>
              </div>
           </div>
         </div>
