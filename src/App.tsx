@@ -48,7 +48,15 @@ function App() {
   const [fen, setFen] = useState("start");
   const [lastMove, setLastMove] = useState<string[]>([]);
   const [moves, setMoves] = useState<string[]>([]);
-  const [activeWhiteStats, setActiveWhiteStats] = useState({ name: "White", score: 0 });
+  const [activeWhiteStats, setActiveWhiteStats] = useState({
+    name: "Stockfish 16",
+    score: 123,
+    depth: 25,
+    nodes: 15000000,
+    nps: 2000000,
+    time: 5000,
+    pv: "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6"
+  });
   const [activeBlackStats, setActiveBlackStats] = useState({ name: "Black", score: 0 });
 
   // Fix: Use destructuring to ignore unused read variables
@@ -473,7 +481,7 @@ function App() {
 
           {/* Left: Engine A Info (Currently active White) */}
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg">
-             <EnginePanel stats={activeWhiteStats} side="white" />
+             <EnginePanel stats={activeWhiteStats} side="white" currentFen={fen} />
              <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-green-400">
                {/* Engine Log Placeholder */}
                <div>[{activeWhiteStats.name}] readyok</div>
@@ -510,7 +518,7 @@ function App() {
 
           {/* Right: Engine B Info (Currently active Black) */}
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg">
-             <EnginePanel stats={activeBlackStats} side="black" />
+             <EnginePanel stats={activeBlackStats} side="black" currentFen={fen} />
              <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-blue-400">
                 {/* Engine Log Placeholder */}
                 <div>[{activeBlackStats.name}] readyok</div>
