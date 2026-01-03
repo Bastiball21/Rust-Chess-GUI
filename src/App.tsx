@@ -20,6 +20,16 @@ interface GameUpdate {
   game_id: number;
 }
 
+interface EngineStatsPayload {
+  engine_idx: number;
+  depth: number;
+  score_cp: number;
+  nodes: number;
+  nps: number;
+  pv: string;
+  game_id: number;
+}
+
 interface EngineConfig {
   name: string;
   path: string;
@@ -38,21 +48,20 @@ function App() {
   const [fen, setFen] = useState("start");
   const [lastMove, setLastMove] = useState<string[]>([]);
   const [moves, setMoves] = useState<string[]>([]);
-  // We keep stats for the currently active white/black engines for display
   const [activeWhiteStats, setActiveWhiteStats] = useState({ name: "White", score: 0 });
   const [activeBlackStats, setActiveBlackStats] = useState({ name: "Black", score: 0 });
-  const [tournamentStats, setTournamentStats] = useState<any>(null);
+
+  // Fix: Use destructuring to ignore unused read variables
   const [, setWhiteEngineIdx] = useState(0);
   const [, setBlackEngineIdx] = useState(1);
 
   const [evalHistory, setEvalHistory] = useState<any[]>([]);
   const [matchResult, setMatchResult] = useState<string | null>(null);
 
-  // Tournament Settings
   const [tournamentMode, setTournamentMode] = useState<"Match" | "RoundRobin" | "Gauntlet">("Match");
   const [engines, setEngines] = useState<EngineConfig[]>([
-      { name: "Engine 1", path: "mock-engine", options: [] },
-      { name: "Engine 2", path: "mock-engine", options: [] }
+    { name: "Engine 1", path: "mock-engine", options: [] },
+    { name: "Engine 2", path: "mock-engine", options: [] }
   ]);
 
   const [gamesCount, setGamesCount] = useState(10);
@@ -63,11 +72,9 @@ function App() {
   const [openingMode, setOpeningMode] = useState<'fen' | 'file'>('fen');
   const [variant, setVariant] = useState("standard");
 
-  // Time Control State (H, M, S)
   const [baseH, setBaseH] = useState(0);
   const [baseM, setBaseM] = useState(1);
   const [baseS, setBaseS] = useState(0);
-
   const [incH, setIncH] = useState(0);
   const [incM, setIncM] = useState(0);
   const [incS, setIncS] = useState(1);
@@ -81,15 +88,15 @@ function App() {
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
 
+  // Stats for the currently selected game
+  const [tournamentStats, setTournamentStats] = useState<any>(null);
+
   useEffect(() => {
     const initStore = async () => {
       const s = await load('settings.json');
       setStore(s);
-      // Load saved engines if any
       const savedEngines = await s.get("engines");
-      if (savedEngines) {
-         setEngines(savedEngines as EngineConfig[]);
-      }
+      if (savedEngines) setEngines(savedEngines as EngineConfig[]);
     };
     initStore();
   }, []);
@@ -122,7 +129,6 @@ function App() {
       setWhiteEngineIdx(u.white_engine_idx);
       setBlackEngineIdx(u.black_engine_idx);
 
-      // Update names
       const whiteName = engines[u.white_engine_idx]?.name || `Engine ${u.white_engine_idx}`;
       const blackName = engines[u.black_engine_idx]?.name || `Engine ${u.black_engine_idx}`;
 
@@ -130,6 +136,22 @@ function App() {
       setActiveBlackStats((s: any) => ({ ...s, name: blackName, time: u.black_time }));
 
       if (u.result) setMatchResult(`Game Over: ${u.result}`);
+    });
+
+    const unlistenStats = listen("engine-stats", (event: any) => {
+      const s = event.payload as EngineStatsPayload;
+      if (selectedGameId !== null && s.game_id !== selectedGameId) return;
+
+      const update = { depth: s.depth, score: s.score_cp, nodes: s.nodes, nps: s.nps, pv: s.pv };
+
+      setWhiteEngineIdx(currWhite => {
+        if (currWhite === s.engine_idx) setActiveWhiteStats(prev => ({...prev, ...update}));
+        return currWhite;
+      });
+      setBlackEngineIdx(currBlack => {
+        if (currBlack === s.engine_idx) setActiveBlackStats(prev => ({...prev, ...update}));
+        return currBlack;
+      });
     });
 
     const unlistenTourneyStats = listen("tournament-stats", (event: any) => {
@@ -150,46 +172,22 @@ function App() {
         });
     });
 
-    const unlistenStats = listen("engine-stats", (event: any) => {
-      const s = event.payload;
-      if (selectedGameId !== null && s.game_id !== selectedGameId) return;
-
-      const update = { depth: s.depth, score: s.score_cp, nodes: s.nodes, nps: s.nps, pv: s.pv };
-
-      // Update stats based on which engine sent it
-      setWhiteEngineIdx(currWhite => {
-          if (currWhite === s.engine_idx) {
-             setActiveWhiteStats(prev => ({...prev, ...update}));
-          }
-          return currWhite;
-      });
-      setBlackEngineIdx(currBlack => {
-          if (currBlack === s.engine_idx) {
-             setActiveBlackStats(prev => ({...prev, ...update}));
-          }
-          return currBlack;
-      });
-    });
     return () => {
-        unlistenUpdate.then(f => f());
-        unlistenStats.then(f => f());
-        unlistenTourneyStats.then(f => f());
-        unlistenSchedule.then(f => f());
+      unlistenUpdate.then(f => f());
+      unlistenStats.then(f => f());
+      unlistenTourneyStats.then(f => f());
+      unlistenSchedule.then(f => f());
     };
-  }, [engines]); // Re-bind if engines list changes (though usually locked during match)
+  }, [engines, selectedGameId]);
 
   useEffect(() => {
     if (moves.length > 0) {
-      let score = 0;
-      // For history, we just want White's advantage.
-      score = activeWhiteStats.score;
-      setEvalHistory(prev => [...prev, { moveNumber: moves.length, score: score || 0 }]);
+      setEvalHistory(prev => [...prev, { moveNumber: moves.length, score: activeWhiteStats.score || 0 }]);
     } else {
       setEvalHistory([]);
     }
   }, [moves, activeWhiteStats.score]);
 
-  // Reset selected game on match start/stop
   const clearGameState = () => {
       setMoves([]); setMatchResult(null); setEvalHistory([]); setFen("start");
       setActiveWhiteStats(s => ({...s, score: 0, time: 0}));
@@ -198,8 +196,9 @@ function App() {
 
   const startMatch = async () => {
     clearGameState();
-    setMatchRunning(true); setIsPaused(false);
-    setSchedule([]); // Clear schedule on start
+    setMatchRunning(true);
+    setIsPaused(false);
+    setSchedule([]);
     setSelectedGameId(null);
 
     // Initialize display names immediately based on the first game pairing
@@ -210,7 +209,6 @@ function App() {
 
     const baseMs = Math.round((baseH * 3600 + baseM * 60 + baseS) * 1000);
     const incMs = Math.round((incH * 3600 + incM * 60 + incS) * 1000);
-
     const config = {
       mode: tournamentMode,
       engines: engines,
@@ -223,20 +221,40 @@ function App() {
       variant: variant
     };
     await invoke("start_match", { config });
-    // Switch to schedule tab automatically on start? User might like it.
     setActiveTab('schedule');
   };
 
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
   const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
 
+  const addEngine = () => { setEngines([...engines, { name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]); };
+  const removeEngine = (idx: number) => {
+    if (engines.length <= 2) return;
+    const newEngines = [...engines];
+    newEngines.splice(idx, 1);
+    setEngines(newEngines);
+  };
+  const updateEnginePath = (idx: number, path: string) => {
+    const newEngines = [...engines];
+    newEngines[idx].path = path;
+    setEngines(newEngines);
+  };
+  const updateEngineName = (idx: number, name: string) => {
+      const newEngines = [...engines];
+      newEngines[idx].name = name;
+      setEngines(newEngines);
+  };
+  const selectFileForEngine = async (idx: number) => {
+    const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
+    if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
+  };
+  const selectOpeningFile = async () => {
+    const selected = await open({ multiple: false, filters: [{ name: 'Openings', extensions: ['epd', 'pgn'] }] });
+    if (selected && typeof selected === 'string') setOpeningFile(selected);
+  };
+
   const handleGameSelect = (id: number) => {
       setSelectedGameId(id);
-      // We should ideally fetch the full state of the game from backend if switching
-      // But for now, we clear state and wait for next update.
-      // This is a limitation: switching games might show empty board until next move/update.
-      // Ideally backend sends full state on subscription or we cache it.
-      // For this MVP, we accept brief flicker/reset.
       clearGameState();
   };
 
@@ -250,39 +268,6 @@ function App() {
        });
        await navigator.clipboard.writeText(pgn);
        alert("PGN copied to clipboard!");
-  };
-
-  const addEngine = () => {
-      setEngines([...engines, { name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]);
-  };
-
-  const removeEngine = (idx: number) => {
-      if (engines.length <= 2) return; // Minimum 2 engines
-      const newEngines = [...engines];
-      newEngines.splice(idx, 1);
-      setEngines(newEngines);
-  };
-
-  const updateEnginePath = (idx: number, path: string) => {
-      const newEngines = [...engines];
-      newEngines[idx].path = path;
-      setEngines(newEngines);
-  };
-
-  const updateEngineName = (idx: number, name: string) => {
-      const newEngines = [...engines];
-      newEngines[idx].name = name;
-      setEngines(newEngines);
-  };
-
-  const selectFileForEngine = async (idx: number) => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
-    if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
-  };
-
-  const selectOpeningFile = async () => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Openings', extensions: ['epd', 'pgn'] }] });
-    if (selected && typeof selected === 'string') setOpeningFile(selected);
   };
 
   return (
