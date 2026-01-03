@@ -36,3 +36,12 @@ pub struct EngineStats {
     pub depth: u32, pub score_cp: Option<i32>, pub score_mate: Option<i32>,
     pub nodes: u64, pub nps: u64, pub pv: String, pub engine_idx: usize,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScheduledGame {
+    pub id: usize,
+    pub white_name: String,
+    pub black_name: String,
+    pub state: String, // "Pending", "Active", "Finished"
+    pub result: Option<String>,
+}

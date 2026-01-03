@@ -2,11 +2,13 @@ use tauri::{AppHandle, Manager, Emitter, State};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use crate::arbiter::Arbiter;
-use crate::types::{TournamentConfig, GameUpdate, EngineStats};
+use crate::types::{TournamentConfig, GameUpdate, EngineStats, ScheduledGame};
+use crate::stats::TournamentStats;
 
 pub mod arbiter;
 pub mod uci;
 pub mod types;
+pub mod stats;
 pub mod mock_engine;
 #[cfg(test)] mod test_integration;
 
@@ -18,13 +20,25 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, config: Tournam
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     let (game_tx, mut game_rx) = mpsc::channel::<GameUpdate>(100);
     let (stats_tx, mut stats_rx) = mpsc::channel::<EngineStats>(100);
-    let arbiter = Arbiter::new(config, game_tx, stats_tx).await.map_err(|e| e.to_string())?;
+    let (tourney_stats_tx, mut tourney_stats_rx) = mpsc::channel::<TournamentStats>(100);
+    let (schedule_update_tx, mut schedule_update_rx) = mpsc::channel::<ScheduledGame>(100);
+
+    let arbiter = Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx).await.map_err(|e| e.to_string())?;
     let arbiter = Arc::new(arbiter);
     { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); *arbiter_lock = Some(arbiter.clone()); }
+
     let app_handle = app.clone();
     tokio::spawn(async move { while let Some(update) = game_rx.recv().await { let _ = app_handle.emit("game-update", update); } });
+
     let app_handle_stats = app.clone();
     tokio::spawn(async move { while let Some(stats) = stats_rx.recv().await { let _ = app_handle_stats.emit("engine-stats", stats); } });
+
+    let app_handle_tstats = app.clone();
+    tokio::spawn(async move { while let Some(stats) = tourney_stats_rx.recv().await { let _ = app_handle_tstats.emit("tournament-stats", stats); } });
+
+    let app_handle_schedule = app.clone();
+    tokio::spawn(async move { while let Some(update) = schedule_update_rx.recv().await { let _ = app_handle_schedule.emit("schedule-update", update); } });
+
     let arbiter_clone = arbiter.clone();
     tokio::spawn(async move { if let Err(e) = arbiter_clone.run_tournament().await { println!("Tournament error: {}", e); } });
     Ok(())
