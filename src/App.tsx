@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Board } from "./components/Board";
 import { EnginePanel } from "./components/EnginePanel";
 import { EvalGraph } from "./components/EvalGraph";
@@ -17,15 +17,6 @@ interface GameUpdate {
   result: string | null;
   white_engine_idx: number;
   black_engine_idx: number;
-}
-
-interface EngineStats {
-  engine_idx: number;
-  depth: number;
-  score_cp: number;
-  nodes: number;
-  nps: number;
-  pv: string;
 }
 
 interface EngineConfig {
@@ -50,8 +41,8 @@ function App() {
   const [activeWhiteStats, setActiveWhiteStats] = useState({ name: "White", score: 0 });
   const [activeBlackStats, setActiveBlackStats] = useState({ name: "Black", score: 0 });
   const [tournamentStats, setTournamentStats] = useState<any>(null);
-  const [whiteEngineIdx, setWhiteEngineIdx] = useState(0);
-  const [blackEngineIdx, setBlackEngineIdx] = useState(1);
+  const [, setWhiteEngineIdx] = useState(0);
+  const [, setBlackEngineIdx] = useState(1);
 
   const [evalHistory, setEvalHistory] = useState<any[]>([]);
   const [matchResult, setMatchResult] = useState<string | null>(null);
@@ -64,6 +55,7 @@ function App() {
   ]);
 
   const [gamesCount, setGamesCount] = useState(10);
+  const [concurrency, setConcurrency] = useState(4);
   const [swapSides, setSwapSides] = useState(true);
   const [openingFen, setOpeningFen] = useState("");
   const [openingFile, setOpeningFile] = useState("");
@@ -201,6 +193,7 @@ function App() {
       engines: engines,
       time_control: { base_ms: baseMs, inc_ms: incMs },
       games_count: gamesCount,
+      concurrency: concurrency,
       swap_sides: swapSides,
       opening_fen: (openingMode === 'fen' && openingFen) ? openingFen : null,
       opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
@@ -365,6 +358,10 @@ function App() {
                         <span className="text-sm">Games/Pair:</span>
                         <input type="number" className="bg-gray-700 p-1 rounded w-16 text-xs" value={gamesCount} onChange={(e) => setGamesCount(parseInt(e.target.value))} />
                     </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm">Concurrency:</span>
+                        <input type="number" min="1" max="16" className="bg-gray-700 p-1 rounded w-16 text-xs" value={concurrency} onChange={(e) => setConcurrency(parseInt(e.target.value) || 1)} />
+                    </div>
                     </div>
                 </>
             ) : (
@@ -429,7 +426,7 @@ function App() {
 
           {/* Left: Engine A Info (Currently active White) */}
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg">
-             <EnginePanel stats={activeWhiteStats} />
+             <EnginePanel stats={activeWhiteStats} side="white" />
              <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-green-400">
                {/* Engine Log Placeholder */}
                <div>[{activeWhiteStats.name}] readyok</div>
@@ -466,7 +463,7 @@ function App() {
 
           {/* Right: Engine B Info (Currently active Black) */}
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg">
-             <EnginePanel stats={activeBlackStats} />
+             <EnginePanel stats={activeBlackStats} side="black" />
              <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-blue-400">
                 {/* Engine Log Placeholder */}
                 <div>[{activeBlackStats.name}] readyok</div>

@@ -111,7 +111,8 @@ impl Arbiter {
         let pairings = self.generate_pairings();
         let games_count = self.config.games_count.max(1);
 
-        let semaphore = Arc::new(Semaphore::new(4));
+        let concurrency = self.config.concurrency.unwrap_or(4).max(1) as usize;
+        let semaphore = Arc::new(Semaphore::new(concurrency));
 
         let mut tasks = Vec::new();
         let mut game_tasks = Vec::new();
