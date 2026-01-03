@@ -1,20 +1,16 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mini-tcec",
-  "version": "0.1.0",
-  "identifier": "com.jules.mini-tcec",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
         "title": "mini-tcec",
-        "width": 800,
-        "height": 600
+        "width": 1280,
+        "height": 800
       }
     ],
     "security": {
