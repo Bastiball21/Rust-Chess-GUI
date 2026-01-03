@@ -224,6 +224,12 @@ function App() {
       setEngines(newEngines);
   };
 
+  const updateEngineName = (idx: number, name: string) => {
+      const newEngines = [...engines];
+      newEngines[idx].name = name;
+      setEngines(newEngines);
+  };
+
   const selectFileForEngine = async (idx: number) => {
     const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
     if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
@@ -281,8 +287,12 @@ function App() {
                     <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
                         {engines.map((eng, idx) => (
                             <div key={idx} className="bg-gray-700 p-2 rounded flex flex-col gap-1">
-                            <div className="flex justify-between">
-                                <span className="text-xs font-bold">{eng.name}</span>
+                            <div className="flex justify-between items-center gap-2">
+                                <input
+                                    className="bg-transparent text-xs font-bold border-b border-gray-600 focus:border-blue-500 outline-none w-full"
+                                    value={eng.name}
+                                    onChange={(e) => updateEngineName(idx, e.target.value)}
+                                />
                                 {engines.length > 2 && <button className="text-red-400 text-xs hover:text-red-300" onClick={() => removeEngine(idx)}>X</button>}
                             </div>
                             <div className="flex gap-1">
