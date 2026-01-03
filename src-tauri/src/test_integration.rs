@@ -29,6 +29,7 @@ mod tests {
             opening_fen: None,
             opening_file: None,
             variant: "standard".to_string(),
+            concurrency: Some(1),
         };
 
         let (game_tx, mut game_rx) = mpsc::channel(100);

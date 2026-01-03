@@ -17,6 +17,7 @@ interface GameUpdate {
   result: string | null;
   white_engine_idx: number;
   black_engine_idx: number;
+  game_id: number;
 }
 
 interface EngineConfig {
@@ -78,6 +79,7 @@ function App() {
   // New State for Schedule Tab
   const [activeTab, setActiveTab] = useState<'settings' | 'schedule'>('settings');
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
+  const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
 
   useEffect(() => {
     const initStore = async () => {
@@ -100,6 +102,16 @@ function App() {
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
       const u = event.payload as GameUpdate;
+
+      // Auto-select first game if none selected
+      if (selectedGameId === null && u.game_id) {
+          setSelectedGameId(u.game_id);
+      }
+
+      if (selectedGameId !== null && u.game_id !== selectedGameId) {
+          return;
+      }
+
       setFen(u.fen);
       if (u.last_move) {
         const from = u.last_move.substring(0, 2);
@@ -140,6 +152,8 @@ function App() {
 
     const unlistenStats = listen("engine-stats", (event: any) => {
       const s = event.payload;
+      if (selectedGameId !== null && s.game_id !== selectedGameId) return;
+
       const update = { depth: s.depth, score: s.score_cp, nodes: s.nodes, nps: s.nps, pv: s.pv };
 
       // Update stats based on which engine sent it
@@ -175,9 +189,18 @@ function App() {
     }
   }, [moves, activeWhiteStats.score]);
 
+  // Reset selected game on match start/stop
+  const clearGameState = () => {
+      setMoves([]); setMatchResult(null); setEvalHistory([]); setFen("start");
+      setActiveWhiteStats(s => ({...s, score: 0, time: 0}));
+      setActiveBlackStats(s => ({...s, score: 0, time: 0}));
+  };
+
   const startMatch = async () => {
-    setMoves([]); setMatchResult(null); setMatchRunning(true); setIsPaused(false);
+    clearGameState();
+    setMatchRunning(true); setIsPaused(false);
     setSchedule([]); // Clear schedule on start
+    setSelectedGameId(null);
 
     // Initialize display names immediately based on the first game pairing
     if (engines.length >= 2) {
@@ -207,6 +230,28 @@ function App() {
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
   const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
 
+  const handleGameSelect = (id: number) => {
+      setSelectedGameId(id);
+      // We should ideally fetch the full state of the game from backend if switching
+      // But for now, we clear state and wait for next update.
+      // This is a limitation: switching games might show empty board until next move/update.
+      // Ideally backend sends full state on subscription or we cache it.
+      // For this MVP, we accept brief flicker/reset.
+      clearGameState();
+  };
+
+  const copyPgn = async () => {
+       let pgn = `[White "${activeWhiteStats.name}"]\n[Black "${activeBlackStats.name}"]\n`;
+       if (matchResult) pgn += `[Result "${matchResult.split(': ')[1] || '*'}"]\n`;
+       pgn += "\n";
+       moves.forEach((m, i) => {
+           if (i % 2 === 0) pgn += `${i/2 + 1}. `;
+           pgn += m + " ";
+       });
+       await navigator.clipboard.writeText(pgn);
+       alert("PGN copied to clipboard!");
+  };
+
   const addEngine = () => {
       setEngines([...engines, { name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]);
   };
@@ -221,6 +266,12 @@ function App() {
   const updateEnginePath = (idx: number, path: string) => {
       const newEngines = [...engines];
       newEngines[idx].path = path;
+      setEngines(newEngines);
+  };
+
+  const updateEngineName = (idx: number, name: string) => {
+      const newEngines = [...engines];
+      newEngines[idx].name = name;
       setEngines(newEngines);
   };
 
@@ -281,8 +332,12 @@ function App() {
                     <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
                         {engines.map((eng, idx) => (
                             <div key={idx} className="bg-gray-700 p-2 rounded flex flex-col gap-1">
-                            <div className="flex justify-between">
-                                <span className="text-xs font-bold">{eng.name}</span>
+                            <div className="flex justify-between items-center gap-2">
+                                <input
+                                    className="bg-transparent text-xs font-bold border-b border-gray-600 focus:border-blue-500 outline-none w-full"
+                                    value={eng.name}
+                                    onChange={(e) => updateEngineName(idx, e.target.value)}
+                                />
                                 {engines.length > 2 && <button className="text-red-400 text-xs hover:text-red-300" onClick={() => removeEngine(idx)}>X</button>}
                             </div>
                             <div className="flex gap-1">
@@ -373,7 +428,14 @@ function App() {
                     </div>
                     <div className="flex flex-col gap-2">
                         {schedule.map((game) => (
-                            <div key={game.id} className={`p-2 rounded text-xs border border-gray-700 flex flex-col gap-1 ${game.state === 'Active' ? 'bg-blue-900/30 border-blue-600' : 'bg-gray-700'}`}>
+                            <div
+                                key={game.id}
+                                className={`p-2 rounded text-xs border flex flex-col gap-1 cursor-pointer transition
+                                    ${game.state === 'Active' ? 'bg-blue-900/30 border-blue-600 hover:bg-blue-800/50' : 'bg-gray-700 border-gray-700'}
+                                    ${selectedGameId === game.id ? 'ring-2 ring-yellow-400' : ''}
+                                `}
+                                onClick={() => handleGameSelect(game.id)}
+                            >
                                 <div className="flex justify-between font-bold">
                                     <span>#{game.id}</span>
                                     <span className={`${
@@ -480,7 +542,10 @@ function App() {
               </div>
            </div>
            <div className="bg-gray-800 rounded-lg border border-gray-700 p-2 flex flex-col">
-              <h3 className="text-xs font-bold text-gray-400 mb-1 ml-2">Move List</h3>
+              <div className="flex justify-between items-center mb-1 mx-2">
+                  <h3 className="text-xs font-bold text-gray-400">Move List</h3>
+                  <button onClick={copyPgn} className="text-[10px] bg-gray-700 px-2 py-0.5 rounded hover:bg-gray-600 text-blue-300">COPY PGN</button>
+              </div>
               <div className="flex-1 overflow-y-auto">
                  <MoveList moves={moves} />
               </div>
