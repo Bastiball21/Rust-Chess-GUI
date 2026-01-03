@@ -41,6 +41,7 @@ function App() {
   // We keep stats for the currently active white/black engines for display
   const [activeWhiteStats, setActiveWhiteStats] = useState({ name: "White", score: 0 });
   const [activeBlackStats, setActiveBlackStats] = useState({ name: "Black", score: 0 });
+  const [tournamentStats, setTournamentStats] = useState<any>(null);
   const [whiteEngineIdx, setWhiteEngineIdx] = useState(0);
   const [blackEngineIdx, setBlackEngineIdx] = useState(1);
 
@@ -115,6 +116,10 @@ function App() {
       if (u.result) setMatchResult(`Game Over: ${u.result}`);
     });
 
+    const unlistenTourneyStats = listen("tournament-stats", (event: any) => {
+        setTournamentStats(event.payload);
+    });
+
     const unlistenStats = listen("engine-stats", (event: any) => {
       const s = event.payload;
       const update = { depth: s.depth, score: s.score_cp, nodes: s.nodes, nps: s.nps, pv: s.pv };
@@ -140,7 +145,7 @@ function App() {
           return currBlack;
       });
     });
-    return () => { unlistenUpdate.then(f => f()); unlistenStats.then(f => f()); };
+    return () => { unlistenUpdate.then(f => f()); unlistenStats.then(f => f()); unlistenTourneyStats.then(f => f()); };
   }, [engines]); // Re-bind if engines list changes (though usually locked during match)
 
   useEffect(() => {
@@ -344,8 +349,13 @@ function App() {
 
           {/* Center: Board */}
           <div className="flex flex-col gap-2 items-center justify-center bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-lg relative">
-             <div className="text-2xl font-bold text-gray-200 mb-2">
+             <div className="text-2xl font-bold text-gray-200 mb-2 flex flex-col items-center">
                {matchResult ? <span className="text-yellow-400">{matchResult}</span> : <span>Game in Progress...</span>}
+               {tournamentStats && (
+                   <span className="text-xs text-blue-400 mt-1">
+                       Score: +{tournamentStats.wins} -{tournamentStats.losses} ={tournamentStats.draws} | {tournamentStats.sprt_status}
+                   </span>
+               )}
              </div>
              <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true } }} />
           </div>
