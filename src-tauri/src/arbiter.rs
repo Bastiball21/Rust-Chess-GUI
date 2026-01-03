@@ -225,14 +225,14 @@ impl Arbiter {
                 tokio::spawn(async move {
                     while let Ok(line) = a_rx.recv().await {
                         if *stop_listen_a.lock().await { break; }
-                        if line.starts_with("info") { if let Some(stats) = parse_info(&line, idx_a_val) { let _ = stats_tx_a.send(stats).await; } }
+                        if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_a_val, game_id) { let _ = stats_tx_a.send(stats).await; } }
                     }
                 });
                 let stop_listen_b = should_stop.clone();
                 tokio::spawn(async move {
                     while let Ok(line) = b_rx.recv().await {
                          if *stop_listen_b.lock().await { break; }
-                         if line.starts_with("info") { if let Some(stats) = parse_info(&line, idx_b_val) { let _ = stats_tx_b.send(stats).await; } }
+                         if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_b_val, game_id) { let _ = stats_tx_b.send(stats).await; } }
                     }
                 });
 
@@ -253,7 +253,7 @@ impl Arbiter {
 
                 let res = play_game_static(
                     white_engine, black_engine, white_idx, black_idx, &start_fen,
-                    &config, &game_update_tx, &should_stop, &is_paused
+        &config, &game_update_tx, &should_stop, &is_paused, game_id
                 ).await;
 
                 if let Ok((result, moves_played)) = res {
@@ -378,7 +378,8 @@ async fn play_game_static(
     config: &TournamentConfig,
     game_update_tx: &mpsc::Sender<GameUpdate>,
     should_stop: &Arc<Mutex<bool>>,
-    is_paused: &Arc<Mutex<bool>>
+    is_paused: &Arc<Mutex<bool>>,
+    game_id: usize
 ) -> anyhow::Result<(String, Vec<String>)> {
     let is_960 = config.variant == "chess960";
     let mut pos: Board = if is_960 {
@@ -421,6 +422,7 @@ async fn play_game_static(
              let _ = game_update_tx.send(GameUpdate {
                 fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
                 move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                game_id
             }).await;
             break;
         }
@@ -436,6 +438,7 @@ async fn play_game_static(
             let _ = game_update_tx.send(GameUpdate {
                 fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
                 move_number: (moves_history.len() / 2 + 1) as u32, result: Some(result_str.to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                game_id
             }).await;
             break;
         }
@@ -514,6 +517,7 @@ async fn play_game_static(
              let _ = game_update_tx.send(GameUpdate {
                 fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
                 move_number: (moves_history.len() / 2 + 1) as u32, result: Some(result_str.to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                game_id
             }).await;
             break;
         }
@@ -523,6 +527,7 @@ async fn play_game_static(
              let _ = game_update_tx.send(GameUpdate {
                 fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
                 move_number: (moves_history.len() / 2 + 1) as u32, result: Some("1/2-1/2".to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                game_id
             }).await;
             break;
         }
@@ -544,6 +549,7 @@ async fn play_game_static(
         let _ = game_update_tx.send(GameUpdate {
             fen: pos.to_fen_string(), last_move: Some(best_move_str), white_time: white_time as u64, black_time: black_time as u64,
             move_number: (moves_history.len() / 2 + 1) as u32, result: None, white_engine_idx: white_idx, black_engine_idx: black_idx,
+            game_id
         }).await;
     }
     Ok((game_result, moves_history))
@@ -590,5 +596,11 @@ fn parse_info(line: &str, engine_idx: usize) -> Option<EngineStats> {
         }
         i += 1;
     }
-    Some(EngineStats { depth, score_cp, score_mate, nodes, nps, pv, engine_idx })
+    Some(EngineStats { depth, score_cp, score_mate, nodes, nps, pv, engine_idx, game_id: 0 }) // Placeholder 0, will be overwritten or context aware
+}
+
+fn parse_info_with_id(line: &str, engine_idx: usize, game_id: usize) -> Option<EngineStats> {
+    let mut stats = parse_info(line, engine_idx)?;
+    stats.game_id = game_id;
+    Some(stats)
 }

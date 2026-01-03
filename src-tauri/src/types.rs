@@ -30,12 +30,14 @@ pub struct TimeControl { pub base_ms: u64, pub inc_ms: u64 }
 pub struct GameUpdate {
     pub fen: String, pub last_move: Option<String>, pub white_time: u64, pub black_time: u64,
     pub move_number: u32, pub result: Option<String>, pub white_engine_idx: usize, pub black_engine_idx: usize,
+    pub game_id: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EngineStats {
     pub depth: u32, pub score_cp: Option<i32>, pub score_mate: Option<i32>,
     pub nodes: u64, pub nps: u64, pub pv: String, pub engine_idx: usize,
+    pub game_id: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
