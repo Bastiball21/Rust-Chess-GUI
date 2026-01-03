@@ -1,5 +1,5 @@
 use crate::uci::AsyncEngine;
-use crate::types::{TournamentConfig, TournamentMode, GameUpdate, EngineStats};
+use crate::types::{TournamentConfig, TournamentMode, GameUpdate, EngineStats, ScheduledGame};
 use crate::stats::TournamentStats;
 use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode, Outcome};
 use shakmaty::fen::Fen;
@@ -35,7 +35,8 @@ pub struct Arbiter {
     game_update_tx: mpsc::Sender<GameUpdate>,
     stats_tx: mpsc::Sender<EngineStats>,
     tourney_stats_tx: mpsc::Sender<TournamentStats>,
-    pgn_tx: mpsc::Sender<String>, // Added PGN channel
+    pgn_tx: mpsc::Sender<String>,
+    schedule_update_tx: mpsc::Sender<ScheduledGame>, // Channel for schedule updates
     should_stop: Arc<Mutex<bool>>,
     is_paused: Arc<Mutex<bool>>,
     openings: Vec<String>,
@@ -43,19 +44,22 @@ pub struct Arbiter {
 }
 
 impl Arbiter {
-    pub async fn new(config: TournamentConfig, game_update_tx: mpsc::Sender<GameUpdate>, stats_tx: mpsc::Sender<EngineStats>, tourney_stats_tx: mpsc::Sender<TournamentStats>) -> anyhow::Result<Self> {
+    pub async fn new(
+        config: TournamentConfig,
+        game_update_tx: mpsc::Sender<GameUpdate>,
+        stats_tx: mpsc::Sender<EngineStats>,
+        tourney_stats_tx: mpsc::Sender<TournamentStats>,
+        schedule_update_tx: mpsc::Sender<ScheduledGame> // Added
+    ) -> anyhow::Result<Self> {
         let mut openings = Vec::new();
         if let Some(ref path) = config.opening_file {
             openings = load_openings(path).unwrap_or_default();
         }
 
-        // Create PGN writer channel
         let (pgn_tx, mut pgn_rx) = mpsc::channel::<String>(100);
 
-        // Spawn PGN writer task
         tokio::spawn(async move {
              use std::io::Write;
-             // Ensure file exists or clear it? Usually we append.
              while let Some(pgn) = pgn_rx.recv().await {
                  if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tournament.pgn") {
                      let _ = file.write_all(pgn.as_bytes());
@@ -70,6 +74,7 @@ impl Arbiter {
             stats_tx,
             tourney_stats_tx,
             pgn_tx,
+            schedule_update_tx,
             should_stop: Arc::new(Mutex::new(false)),
             is_paused: Arc::new(Mutex::new(false)),
             openings,
@@ -109,15 +114,44 @@ impl Arbiter {
         let semaphore = Arc::new(Semaphore::new(4));
 
         let mut tasks = Vec::new();
-
         let mut game_tasks = Vec::new();
+        let mut schedule_list = Vec::new();
+
+        let mut game_id_counter = 0;
         for (idx_a, idx_b) in pairings {
             for i in 0..games_count {
-                game_tasks.push((idx_a, idx_b, i));
+                // Determine names for schedule
+                let (white_idx, black_idx) = if self.config.swap_sides && i % 2 != 0 {
+                    (idx_b, idx_a)
+                } else {
+                    (idx_a, idx_b)
+                };
+                let white_name = self.config.engines[white_idx].name.clone();
+                let black_name = self.config.engines[black_idx].name.clone();
+
+                game_id_counter += 1;
+                let scheduled_game = ScheduledGame {
+                    id: game_id_counter,
+                    white_name: white_name.clone(),
+                    black_name: black_name.clone(),
+                    state: "Pending".to_string(),
+                    result: None,
+                };
+                schedule_list.push(scheduled_game.clone());
+
+                // Send initial pending state
+                let _ = self.schedule_update_tx.send(scheduled_game).await;
+
+                game_tasks.push((idx_a, idx_b, i, game_id_counter));
             }
         }
 
-        for (idx_a, idx_b, game_idx) in game_tasks {
+        // We could send the full list as a "batch" here, but for simplicity we rely on individual "Pending" events
+        // sent above. The frontend can accumulate them.
+        // Actually, individual events might arrive out of order or be slow.
+        // It's better if the frontend clears schedule on start.
+
+        for (idx_a, idx_b, game_idx, game_id) in game_tasks {
              if *self.should_stop.lock().await { break; }
 
              let permit = semaphore.clone().acquire_owned().await?;
@@ -131,11 +165,30 @@ impl Arbiter {
              let tourney_stats_tx = self.tourney_stats_tx.clone();
              let tourney_stats = self.tourney_stats.clone();
              let pgn_tx = self.pgn_tx.clone();
+             let schedule_update_tx = self.schedule_update_tx.clone();
              let openings = self.openings.clone();
 
              let task = tokio::spawn(async move {
                 let _permit = permit;
                 if *should_stop.lock().await { return; }
+
+                let (white_engine_idx, black_engine_idx) = if config.swap_sides && game_idx % 2 != 0 {
+                    (idx_b, idx_a)
+                } else {
+                    (idx_a, idx_b)
+                };
+
+                let white_name = config.engines[white_engine_idx].name.clone();
+                let black_name = config.engines[black_engine_idx].name.clone();
+
+                // Notify Active
+                let _ = schedule_update_tx.send(ScheduledGame {
+                    id: game_id,
+                    white_name: white_name.clone(),
+                    black_name: black_name.clone(),
+                    state: "Active".to_string(),
+                    result: None
+                }).await;
 
                 let eng_a_config = &config.engines[idx_a];
                 let eng_b_config = &config.engines[idx_b];
@@ -203,10 +256,18 @@ impl Arbiter {
                 ).await;
 
                 if let Ok((result, moves_played)) = res {
-                    let white_name = &config.engines[white_idx].name;
-                    let black_name = &config.engines[black_idx].name;
-                    // Format PGN and send to writer task
-                    let pgn = format_pgn(&moves_played, &result, white_name, black_name, &start_fen);
+                    // Notify Finished
+                    let _ = schedule_update_tx.send(ScheduledGame {
+                        id: game_id,
+                        white_name: white_name.clone(),
+                        black_name: black_name.clone(),
+                        state: "Finished".to_string(),
+                        result: Some(result.clone())
+                    }).await;
+
+                    let white_name_pgn = &config.engines[white_idx].name;
+                    let black_name_pgn = &config.engines[black_idx].name;
+                    let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen);
                     let _ = pgn_tx.send(pgn).await;
 
                     {
@@ -215,6 +276,15 @@ impl Arbiter {
                         stats.update(&result, is_white_a);
                         let _ = tourney_stats_tx.send(stats.clone()).await;
                     }
+                } else {
+                     // Notify Error/Stopped
+                     let _ = schedule_update_tx.send(ScheduledGame {
+                        id: game_id,
+                        white_name: white_name.clone(),
+                        black_name: black_name.clone(),
+                        state: "Aborted".to_string(),
+                        result: None
+                    }).await;
                 }
 
                 let _ = engine_a.quit().await;
@@ -228,9 +298,6 @@ impl Arbiter {
             let _ = task.await;
         }
 
-        // Cleanup: Clear active engines list now that all tasks are done.
-        // This prevents the list from growing indefinitely if the arbiter instance is reused (though currently it's one per match).
-        // It also ensures clean state.
         {
             let mut active = self.active_engines.lock().await;
             active.clear();
