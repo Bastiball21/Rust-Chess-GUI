@@ -120,8 +120,8 @@ function App() {
   const startMatch = async () => {
     setMoves([]); setMatchResult(null); setMatchRunning(true); setIsPaused(false);
 
-    const baseMs = (baseH * 3600 + baseM * 60 + baseS) * 1000;
-    const incMs = (incH * 3600 + incM * 60 + incS) * 1000;
+    const baseMs = Math.round((baseH * 3600 + baseM * 60 + baseS) * 1000);
+    const incMs = Math.round((incH * 3600 + incM * 60 + incS) * 1000);
 
     const config = {
       white: { name: "Engine A", path: whitePath, options: [] },
@@ -181,7 +181,7 @@ function App() {
                    <span className="text-gray-500 self-center">:</span>
                    <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="M" value={baseM} onChange={(e) => setBaseM(parseInt(e.target.value) || 0)} />
                    <span className="text-gray-500 self-center">:</span>
-                   <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="S" value={baseS} onChange={(e) => setBaseS(parseInt(e.target.value) || 0)} />
+                   <input type="number" min="0" step="0.1" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="S" value={baseS} onChange={(e) => setBaseS(parseFloat(e.target.value) || 0)} />
                 </div>
               </div>
               <div>
@@ -191,7 +191,7 @@ function App() {
                    <span className="text-gray-500 self-center">:</span>
                    <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="M" value={incM} onChange={(e) => setIncM(parseInt(e.target.value) || 0)} />
                    <span className="text-gray-500 self-center">:</span>
-                   <input type="number" min="0" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="S" value={incS} onChange={(e) => setIncS(parseInt(e.target.value) || 0)} />
+                   <input type="number" min="0" step="0.1" className="bg-gray-700 p-1 rounded w-full text-xs text-center" placeholder="S" value={incS} onChange={(e) => setIncS(parseFloat(e.target.value) || 0)} />
                 </div>
               </div>
            </div>
