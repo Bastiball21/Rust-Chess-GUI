@@ -2,7 +2,7 @@ use tauri::{AppHandle, Manager, Emitter, State};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use crate::arbiter::Arbiter;
-use crate::types::{MatchConfig, GameUpdate, EngineStats};
+use crate::types::{TournamentConfig, GameUpdate, EngineStats};
 
 pub mod arbiter;
 pub mod uci;
@@ -13,7 +13,7 @@ pub mod mock_engine;
 struct AppState { current_arbiter: Arc<Mutex<Option<Arc<Arbiter>>>>, }
 
 #[tauri::command]
-async fn start_match(app: AppHandle, state: State<'_, AppState>, config: MatchConfig) -> Result<(), String> {
+async fn start_match(app: AppHandle, state: State<'_, AppState>, config: TournamentConfig) -> Result<(), String> {
     let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     let (game_tx, mut game_rx) = mpsc::channel::<GameUpdate>(100);
@@ -26,7 +26,7 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, config: MatchCo
     let app_handle_stats = app.clone();
     tokio::spawn(async move { while let Some(stats) = stats_rx.recv().await { let _ = app_handle_stats.emit("engine-stats", stats); } });
     let arbiter_clone = arbiter.clone();
-    tokio::spawn(async move { if let Err(e) = arbiter_clone.run_match().await { println!("Match error: {}", e); } });
+    tokio::spawn(async move { if let Err(e) = arbiter_clone.run_tournament().await { println!("Tournament error: {}", e); } });
     Ok(())
 }
 

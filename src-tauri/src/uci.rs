@@ -1,11 +1,8 @@
 use std::process::Stdio;
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::io::{BufReader, AsyncBufReadExt, AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
-use std::path::PathBuf;
 use anyhow::{Result, Context};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct EngineInfo {
@@ -14,10 +11,9 @@ pub struct EngineInfo {
     pub options: Vec<String>, // Placeholder for UCI options
 }
 
-// Removing unused UciEngine struct and implementation to fix compile errors
-
 use tokio::sync::broadcast;
 
+#[derive(Clone)]
 pub struct AsyncEngine {
     stdin_tx: mpsc::Sender<String>,
     // We use broadcast so multiple listeners (Arbiter + Logger) can hear the engine
@@ -65,8 +61,6 @@ impl AsyncEngine {
             while let Ok(Some(line)) = lines.next_line().await {
                 if stdout_tx_clone.send(line).is_err() {
                     // Receiver dropped
-                    // Continue or break? If no one listens, we still might want to keep reading to avoid buffer fill?
-                    // Actually broadcast returns error if no receivers, but that's fine.
                 }
             }
         });

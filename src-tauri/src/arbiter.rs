@@ -1,5 +1,5 @@
 use crate::uci::AsyncEngine;
-use crate::types::{MatchConfig, GameUpdate, EngineStats};
+use crate::types::{TournamentConfig, TournamentMode, GameUpdate, EngineStats};
 use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode, Outcome};
 use shakmaty::fen::Fen;
 use tokio::sync::mpsc;
@@ -29,71 +29,136 @@ impl Board {
 }
 
 pub struct Arbiter {
-    engine_a: AsyncEngine, engine_b: AsyncEngine, match_config: MatchConfig,
-    game_update_tx: mpsc::Sender<GameUpdate>, stats_tx: mpsc::Sender<EngineStats>,
-    should_stop: Arc<Mutex<bool>>, is_paused: Arc<Mutex<bool>>,
+    active_engines: Arc<Mutex<Option<(AsyncEngine, AsyncEngine)>>>,
+    config: TournamentConfig,
+    game_update_tx: mpsc::Sender<GameUpdate>,
+    stats_tx: mpsc::Sender<EngineStats>,
+    should_stop: Arc<Mutex<bool>>,
+    is_paused: Arc<Mutex<bool>>,
     openings: Vec<String>,
 }
 
 impl Arbiter {
-    pub async fn new(match_config: MatchConfig, game_update_tx: mpsc::Sender<GameUpdate>, stats_tx: mpsc::Sender<EngineStats>) -> anyhow::Result<Self> {
-        let engine_a = AsyncEngine::spawn(&match_config.white.path).await?;
-        let engine_b = AsyncEngine::spawn(&match_config.black.path).await?;
-        if match_config.variant == "chess960" {
-            engine_a.send("setoption name UCI_Chess960 value true".into()).await?;
-            engine_b.send("setoption name UCI_Chess960 value true".into()).await?;
-        }
-
+    pub async fn new(config: TournamentConfig, game_update_tx: mpsc::Sender<GameUpdate>, stats_tx: mpsc::Sender<EngineStats>) -> anyhow::Result<Self> {
         let mut openings = Vec::new();
-        if let Some(ref path) = match_config.opening_file {
+        if let Some(ref path) = config.opening_file {
             openings = load_openings(path).unwrap_or_default();
         }
 
-        let mut a_rx = engine_a.stdout_broadcast.subscribe();
-        let mut b_rx = engine_b.stdout_broadcast.subscribe();
-        let stats_tx_clone = stats_tx.clone();
-        tokio::spawn(async move {
-            while let Ok(line) = a_rx.recv().await {
-                if line.starts_with("info") { if let Some(stats) = parse_info(&line, 0) { let _ = stats_tx_clone.send(stats).await; } }
-            }
-        });
-        let stats_tx_clone2 = stats_tx.clone();
-        tokio::spawn(async move {
-            while let Ok(line) = b_rx.recv().await {
-                if line.starts_with("info") { if let Some(stats) = parse_info(&line, 1) { let _ = stats_tx_clone2.send(stats).await; } }
-            }
-        });
-        Ok(Self { engine_a, engine_b, match_config, game_update_tx, stats_tx, should_stop: Arc::new(Mutex::new(false)), is_paused: Arc::new(Mutex::new(false)), openings })
+        Ok(Self {
+            active_engines: Arc::new(Mutex::new(None)),
+            config,
+            game_update_tx,
+            stats_tx,
+            should_stop: Arc::new(Mutex::new(false)),
+            is_paused: Arc::new(Mutex::new(false)),
+            openings
+        })
     }
 
     pub async fn set_paused(&self, paused: bool) { *self.is_paused.lock().await = paused; }
 
-    pub async fn run_match(&self) -> anyhow::Result<()> {
-        let games_count = self.match_config.games_count.max(1);
-        for i in 0..games_count {
+    fn generate_pairings(&self) -> Vec<(usize, usize)> {
+        let n = self.config.engines.len();
+        let mut pairings = Vec::new();
+        match self.config.mode {
+            TournamentMode::Match => {
+                if n >= 2 { pairings.push((0, 1)); }
+            },
+            TournamentMode::Gauntlet => {
+                if n >= 2 {
+                    for i in 1..n { pairings.push((0, i)); }
+                }
+            },
+            TournamentMode::RoundRobin => {
+                for i in 0..n {
+                    for j in i+1..n {
+                        pairings.push((i, j));
+                    }
+                }
+            }
+        }
+        pairings
+    }
+
+    pub async fn run_tournament(&self) -> anyhow::Result<()> {
+        let pairings = self.generate_pairings();
+        let games_count = self.config.games_count.max(1);
+
+        for (idx_a, idx_b) in pairings {
             if *self.should_stop.lock().await { break; }
-            let (white_engine, black_engine, white_idx) = if self.match_config.swap_sides && i % 2 != 0 {
-                (&self.engine_b, &self.engine_a, 1)
-            } else { (&self.engine_a, &self.engine_b, 0) };
 
-            let start_fen = if !self.openings.is_empty() {
-                // Use opening from file: cycle through list (change every 2 games if swap sides is on)
-                let idx = if self.match_config.swap_sides { (i / 2) as usize } else { i as usize };
-                self.openings[idx % self.openings.len()].clone()
-            } else if let Some(ref f) = self.match_config.opening_fen {
-                if !f.trim().is_empty() { f.clone() } else { self.generate_start_fen() }
-            } else {
-                self.generate_start_fen()
-            };
+            let eng_a_config = &self.config.engines[idx_a];
+            let eng_b_config = &self.config.engines[idx_b];
 
-            self.play_game(white_engine, black_engine, white_idx, &start_fen).await?;
-            sleep(Duration::from_millis(500)).await;
+            let engine_a = AsyncEngine::spawn(&eng_a_config.path).await?;
+            let engine_b = AsyncEngine::spawn(&eng_b_config.path).await?;
+
+            if self.config.variant == "chess960" {
+                engine_a.send("setoption name UCI_Chess960 value true".into()).await?;
+                engine_b.send("setoption name UCI_Chess960 value true".into()).await?;
+            }
+
+            {
+                let mut active = self.active_engines.lock().await;
+                *active = Some((engine_a.clone(), engine_b.clone()));
+            }
+
+            // Setup listeners
+            let mut a_rx = engine_a.stdout_broadcast.subscribe();
+            let mut b_rx = engine_b.stdout_broadcast.subscribe();
+            let stats_tx_a = self.stats_tx.clone();
+            let stats_tx_b = self.stats_tx.clone();
+            let idx_a_val = idx_a;
+            let idx_b_val = idx_b;
+
+            tokio::spawn(async move {
+                while let Ok(line) = a_rx.recv().await {
+                    if line.starts_with("info") { if let Some(stats) = parse_info(&line, idx_a_val) { let _ = stats_tx_a.send(stats).await; } }
+                }
+            });
+            tokio::spawn(async move {
+                while let Ok(line) = b_rx.recv().await {
+                    if line.starts_with("info") { if let Some(stats) = parse_info(&line, idx_b_val) { let _ = stats_tx_b.send(stats).await; } }
+                }
+            });
+
+            for i in 0..games_count {
+                if *self.should_stop.lock().await { break; }
+
+                let (white_engine, black_engine, white_idx, black_idx) = if self.config.swap_sides && i % 2 != 0 {
+                    (&engine_b, &engine_a, idx_b, idx_a)
+                } else {
+                    (&engine_a, &engine_b, idx_a, idx_b)
+                };
+
+                let start_fen = if !self.openings.is_empty() {
+                    let idx = if self.config.swap_sides { (i / 2) as usize } else { i as usize };
+                    self.openings[idx % self.openings.len()].clone()
+                } else if let Some(ref f) = self.config.opening_fen {
+                    if !f.trim().is_empty() { f.clone() } else { self.generate_start_fen() }
+                } else {
+                    self.generate_start_fen()
+                };
+
+                self.play_game(white_engine, black_engine, white_idx, black_idx, &start_fen).await?;
+                sleep(Duration::from_millis(500)).await;
+            }
+
+            // Cleanup current engines
+            {
+                let mut active = self.active_engines.lock().await;
+                if let Some((ea, eb)) = active.take() {
+                    let _ = ea.quit().await;
+                    let _ = eb.quit().await;
+                }
+            }
         }
         Ok(())
     }
 
     fn generate_start_fen(&self) -> String {
-        if self.match_config.variant == "chess960" {
+        if self.config.variant == "chess960" {
             let _pieces = vec![Role::Rook, Role::Knight, Role::Bishop, Role::Queen, Role::King, Role::Bishop, Role::Knight, Role::Rook];
             let mut rng = rand::rng();
             let mut dark_squares = vec![0, 2, 4, 6]; let mut light_squares = vec![1, 3, 5, 7];
@@ -117,8 +182,8 @@ impl Arbiter {
         } else { "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string() }
     }
 
-    async fn play_game(&self, white_engine: &AsyncEngine, black_engine: &AsyncEngine, white_idx: usize, start_fen: &str) -> anyhow::Result<()> {
-        let is_960 = self.match_config.variant == "chess960";
+    async fn play_game(&self, white_engine: &AsyncEngine, black_engine: &AsyncEngine, white_idx: usize, black_idx: usize, start_fen: &str) -> anyhow::Result<()> {
+        let is_960 = self.config.variant == "chess960";
         let mut pos: Board = if is_960 {
              let setup = Fen::from_ascii(start_fen.as_bytes())?;
              let pos_960: Chess = setup.into_position(CastlingMode::Chess960)?;
@@ -133,9 +198,9 @@ impl Arbiter {
         sleep(Duration::from_millis(50)).await;
         white_engine.send("ucinewgame".into()).await?; black_engine.send("ucinewgame".into()).await?;
 
-        let mut white_time = self.match_config.time_control.base_ms as i64;
-        let mut black_time = self.match_config.time_control.base_ms as i64;
-        let inc = self.match_config.time_control.inc_ms as i64;
+        let mut white_time = self.config.time_control.base_ms as i64;
+        let mut black_time = self.config.time_control.base_ms as i64;
+        let inc = self.config.time_control.inc_ms as i64;
         let mut moves_history: Vec<String> = Vec::new();
 
         loop {
@@ -151,7 +216,7 @@ impl Arbiter {
                 };
                 self.game_update_tx.send(GameUpdate {
                     fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
-                    move_number: (moves_history.len() / 2 + 1) as u32, result: Some(result_str.to_string()), white_engine_idx: white_idx,
+                    move_number: (moves_history.len() / 2 + 1) as u32, result: Some(result_str.to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
                 }).await?;
                 break;
             }
@@ -201,12 +266,20 @@ impl Arbiter {
 
             self.game_update_tx.send(GameUpdate {
                 fen: pos.to_fen_string(), last_move: Some(best_move_str), white_time: white_time as u64, black_time: black_time as u64,
-                move_number: (moves_history.len() / 2 + 1) as u32, result: None, white_engine_idx: white_idx,
+                move_number: (moves_history.len() / 2 + 1) as u32, result: None, white_engine_idx: white_idx, black_engine_idx: black_idx,
             }).await?;
         }
         Ok(())
     }
-    pub async fn stop(&self) { *self.should_stop.lock().await = true; let _ = self.engine_a.quit().await; let _ = self.engine_b.quit().await; }
+
+    pub async fn stop(&self) {
+        *self.should_stop.lock().await = true;
+        let mut active = self.active_engines.lock().await;
+        if let Some((ea, eb)) = active.take() {
+            let _ = ea.quit().await;
+            let _ = eb.quit().await;
+        }
+    }
 
 }
 
