@@ -169,6 +169,17 @@ function App() {
   const startMatch = async () => {
     setMoves([]); setMatchResult(null); setMatchRunning(true); setIsPaused(false);
 
+    // Initialize display names immediately based on the first game pairing
+    // For Match mode, it's Engine 0 vs Engine 1 usually.
+    // For RoundRobin/Gauntlet, it starts with pairing (0,1) usually.
+    // We assume default start is White=0, Black=1.
+    // Ideally, the backend should send an initial "game-start" event, but "game-update" comes quickly.
+    // We'll set the names based on the current selection to ensure immediate feedback.
+    if (engines.length >= 2) {
+       setActiveWhiteStats(prev => ({ ...prev, name: engines[0].name }));
+       setActiveBlackStats(prev => ({ ...prev, name: engines[1].name }));
+    }
+
     const baseMs = Math.round((baseH * 3600 + baseM * 60 + baseS) * 1000);
     const incMs = Math.round((incH * 3600 + incM * 60 + incS) * 1000);
 
@@ -357,7 +368,22 @@ function App() {
                    </span>
                )}
              </div>
+
+             {/* Black Engine (Top) */}
+             <div className="w-full flex justify-between items-end px-4 mb-1">
+                 <span className="text-gray-400 font-mono text-xs">BLACK</span>
+                 <span className="text-white font-bold text-lg">{activeBlackStats.name}</span>
+                 <span className="text-gray-400 font-mono text-xs">{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
+             </div>
+
              <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true } }} />
+
+             {/* White Engine (Bottom) */}
+             <div className="w-full flex justify-between items-start px-4 mt-1">
+                 <span className="text-gray-400 font-mono text-xs">WHITE</span>
+                 <span className="text-white font-bold text-lg">{activeWhiteStats.name}</span>
+                 <span className="text-gray-400 font-mono text-xs">{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span>
+             </div>
           </div>
 
           {/* Right: Engine B Info (Currently active Black) */}
