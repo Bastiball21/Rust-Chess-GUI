@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Board } from "./components/Board";
 import { EnginePanel } from "./components/EnginePanel";
+import { PvBoard } from "./components/PvBoard";
 import { EvalGraph } from "./components/EvalGraph";
 import { MoveList } from "./components/MoveList";
 import { invoke } from "@tauri-apps/api/core";
@@ -500,9 +501,12 @@ function App() {
 
           {/* Left: Engine A Info (Currently active White) */}
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg overflow-hidden">
-             <EnginePanel stats={activeWhiteStats} side="white" currentFen={fen} />
-             <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-green-400">
-               <div>[{activeWhiteStats.name}] readyok</div>
+             <EnginePanel stats={activeWhiteStats} side="white" />
+             <div className="flex-1 min-h-0 flex gap-2">
+                <PvBoard pv={activeWhiteStats.pv} currentFen={fen} side="white" />
+                <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-green-400">
+                    <div>[{activeWhiteStats.name}] readyok</div>
+                </div>
              </div>
           </div>
 
@@ -524,7 +528,7 @@ function App() {
                  <span className="text-gray-400 font-mono text-xs">{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
              </div>
 
-             <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true } }} shapes={pvShapes} />
+             <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true }, drawable: { visible: true } }} shapes={pvShapes} />
 
              {/* White Engine (Bottom) */}
              <div className="w-full flex justify-between items-start px-4 mt-1">
@@ -536,9 +540,12 @@ function App() {
 
           {/* Right: Engine B Info (Currently active Black) */}
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg overflow-hidden">
-             <EnginePanel stats={activeBlackStats} side="black" currentFen={fen} />
-             <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-blue-400">
-                <div>[{activeBlackStats.name}] readyok</div>
+             <EnginePanel stats={activeBlackStats} side="black" />
+             <div className="flex-1 min-h-0 flex gap-2">
+                <PvBoard pv={activeBlackStats.pv} currentFen={fen} side="black" />
+                <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-blue-400">
+                    <div>[{activeBlackStats.name}] readyok</div>
+                </div>
              </div>
           </div>
         </div>
