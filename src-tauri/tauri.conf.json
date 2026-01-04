@@ -1,4 +1,7 @@
 {
+  "productName": "mini-tcec",
+  "version": "0.1.0",
+  "identifier": "com.minitcec.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
