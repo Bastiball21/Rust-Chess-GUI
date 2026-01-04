@@ -16,7 +16,7 @@ interface EngineStats {
 interface EnginePanelProps {
     stats: EngineStats;
     side: 'white' | 'black';
-    currentFen: string; // <--- New Prop
+    currentFen: string;
 }
 
 export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, currentFen }) => {
@@ -41,31 +41,31 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, currentFe
 
     return (
         <div className={`flex flex-col p-4 ${side === 'white' ? 'bg-gray-800' : 'bg-gray-900'} text-gray-200 border-b border-gray-700 h-1/2 overflow-hidden`}>
-            <div className="flex justify-between items-baseline mb-2">
-                <h2 className="text-xl font-bold text-white">{stats.name}</h2>
-                <span className="text-2xl font-mono font-bold">
+            <div className="flex justify-between items-baseline mb-2 shrink-0">
+                <h2 className="text-xl font-bold text-white truncate mr-2">{stats.name}</h2>
+                <span className="text-2xl font-mono font-bold whitespace-nowrap">
                     {stats.score ? (stats.score > 0 ? `+${(stats.score / 100).toFixed(2)}` : (stats.score / 100).toFixed(2)) : "0.00"}
                 </span>
             </div>
-            <div className="flex gap-4 h-full min-h-0">
+            <div className="flex gap-2 h-full min-h-0">
                 {/* Left: Stats & Text PV */}
                 <div className="flex-1 flex flex-col min-w-0">
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm font-mono text-gray-400 mb-2">
-                        <div>Depth: <span className="text-gray-200">{stats.depth || 0}</span></div>
-                        <div>NPS: <span className="text-gray-200">{stats.nps ? (stats.nps / 1000).toFixed(0) + "k" : 0}</span></div>
-                        <div>Nodes: <span className="text-gray-200">{stats.nodes ? (stats.nodes / 1000000).toFixed(1) + "M" : 0}</span></div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-mono text-gray-400 mb-2">
+                        <span className="whitespace-nowrap">D: <span className="text-gray-200">{stats.depth || 0}</span></span>
+                        <span className="whitespace-nowrap">NPS: <span className="text-gray-200">{stats.nps ? (stats.nps / 1000).toFixed(0) + "k" : 0}</span></span>
+                        <span className="whitespace-nowrap">N: <span className="text-gray-200">{stats.nodes ? (stats.nodes / 1000000).toFixed(1) + "M" : 0}</span></span>
                     </div>
-                    <div className="flex-1 bg-gray-950 p-2 rounded font-mono text-xs overflow-y-auto text-gray-400 mb-2">
+                    <div className="flex-1 bg-gray-950 p-2 rounded font-mono text-[10px] leading-tight overflow-y-auto text-gray-400 mb-2 break-all">
                         {stats.pv || "Thinking..."}
                     </div>
 
-                    <div className="text-4xl font-mono text-center py-2 bg-black rounded text-white">
+                    <div className="text-2xl font-mono text-center py-1 bg-black rounded text-white shrink-0">
                         {stats.time ? new Date(stats.time).toISOString().substr(14, 5) : "00:00"}
                     </div>
                 </div>
                 {/* Right: PV Board */}
-                <div className="w-40 shrink-0 bg-gray-800 rounded border border-gray-600 flex items-center justify-center overflow-hidden">
-                    <div className="w-[158px] h-[158px] pointer-events-none">
+                <div className="w-32 shrink-0 bg-gray-800 rounded border border-gray-600 flex items-center justify-center overflow-hidden aspect-square self-center">
+                    <div className="w-full h-full pointer-events-none">
                         <Chessground
                             fen={pvFen === "start" ? undefined : pvFen}
                             orientation={side}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Board } from "./components/Board";
 import { EnginePanel } from "./components/EnginePanel";
 import { EvalGraph } from "./components/EvalGraph";
@@ -48,20 +48,11 @@ function App() {
   const [fen, setFen] = useState("start");
   const [lastMove, setLastMove] = useState<string[]>([]);
   const [moves, setMoves] = useState<string[]>([]);
-  const [activeWhiteStats, setActiveWhiteStats] = useState({
-    name: "Stockfish 16",
-    score: 123,
-    depth: 25,
-    nodes: 15000000,
-    nps: 2000000,
-    time: 5000,
-    pv: "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6"
-  });
-  const [activeBlackStats, setActiveBlackStats] = useState({ name: "Black", score: 0 });
+  const [activeWhiteStats, setActiveWhiteStats] = useState({ name: "White", score: 0, pv: "" });
+  const [activeBlackStats, setActiveBlackStats] = useState({ name: "Black", score: 0, pv: "" });
 
-  // Fix: Use destructuring to ignore unused read variables
-  const [, setWhiteEngineIdx] = useState(0);
-  const [, setBlackEngineIdx] = useState(1);
+  const [whiteEngineIdx, setWhiteEngineIdx] = useState(0);
+  const [blackEngineIdx, setBlackEngineIdx] = useState(1);
 
   const [evalHistory, setEvalHistory] = useState<any[]>([]);
   const [matchResult, setMatchResult] = useState<string | null>(null);
@@ -98,6 +89,18 @@ function App() {
 
   // Stats for the currently selected game
   const [tournamentStats, setTournamentStats] = useState<any>(null);
+
+  // Sync engine names if changed in settings
+  useEffect(() => {
+      const wName = engines[whiteEngineIdx]?.name;
+      const bName = engines[blackEngineIdx]?.name;
+      if (wName && wName !== activeWhiteStats.name) {
+          setActiveWhiteStats(prev => ({ ...prev, name: wName }));
+      }
+      if (bName && bName !== activeBlackStats.name) {
+          setActiveBlackStats(prev => ({ ...prev, name: bName }));
+      }
+  }, [engines, whiteEngineIdx, blackEngineIdx]);
 
   useEffect(() => {
     const initStore = async () => {
@@ -152,14 +155,8 @@ function App() {
 
       const update = { depth: s.depth, score: s.score_cp, nodes: s.nodes, nps: s.nps, pv: s.pv };
 
-      setWhiteEngineIdx(currWhite => {
-        if (currWhite === s.engine_idx) setActiveWhiteStats(prev => ({...prev, ...update}));
-        return currWhite;
-      });
-      setBlackEngineIdx(currBlack => {
-        if (currBlack === s.engine_idx) setActiveBlackStats(prev => ({...prev, ...update}));
-        return currBlack;
-      });
+      if (whiteEngineIdx === s.engine_idx) setActiveWhiteStats(prev => ({...prev, ...update}));
+      if (blackEngineIdx === s.engine_idx) setActiveBlackStats(prev => ({...prev, ...update}));
     });
 
     const unlistenTourneyStats = listen("tournament-stats", (event: any) => {
@@ -186,7 +183,7 @@ function App() {
       unlistenTourneyStats.then(f => f());
       unlistenSchedule.then(f => f());
     };
-  }, [engines, selectedGameId]);
+  }, [engines, selectedGameId, whiteEngineIdx, blackEngineIdx]);
 
   useEffect(() => {
     if (moves.length > 0) {
@@ -198,8 +195,8 @@ function App() {
 
   const clearGameState = () => {
       setMoves([]); setMatchResult(null); setEvalHistory([]); setFen("start");
-      setActiveWhiteStats(s => ({...s, score: 0, time: 0}));
-      setActiveBlackStats(s => ({...s, score: 0, time: 0}));
+      setActiveWhiteStats(s => ({...s, score: 0, time: 0, pv: ""}));
+      setActiveBlackStats(s => ({...s, score: 0, time: 0, pv: ""}));
   };
 
   const startMatch = async () => {
@@ -278,10 +275,32 @@ function App() {
        alert("PGN copied to clipboard!");
   };
 
+  // Determine PV shapes
+  const pvShapes = useMemo(() => {
+      const shapes: any[] = [];
+      // White arrow (Green)
+      if (activeWhiteStats.pv) {
+          const parts = activeWhiteStats.pv.split(" ");
+          if (parts.length > 0 && parts[0].length >= 4) {
+              const m = parts[0];
+              shapes.push({ brush: 'green', orig: m.slice(0,2), dest: m.slice(2,4) });
+          }
+      }
+      // Black arrow (Blue)
+      if (activeBlackStats.pv) {
+          const parts = activeBlackStats.pv.split(" ");
+          if (parts.length > 0 && parts[0].length >= 4) {
+              const m = parts[0];
+              shapes.push({ brush: 'blue', orig: m.slice(0,2), dest: m.slice(2,4) });
+          }
+      }
+      return shapes;
+  }, [activeWhiteStats.pv, activeBlackStats.pv]);
+
   return (
     <div className="h-screen w-screen bg-gray-900 text-white flex overflow-hidden">
       {/* Sidebar */}
-      <div className="w-80 bg-gray-800 flex flex-col border-r border-gray-700 overflow-hidden">
+      <div className="w-80 bg-gray-800 flex flex-col border-r border-gray-700 overflow-hidden shrink-0 z-10 relative">
         <div className="p-4 border-b border-gray-700 bg-gray-850 shrink-0">
             <h1 className="text-xl font-bold text-center text-blue-400 mb-2">Mini-TCEC</h1>
 
@@ -480,10 +499,9 @@ function App() {
         <div className="grid grid-cols-3 gap-4 h-full min-h-0">
 
           {/* Left: Engine A Info (Currently active White) */}
-          <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg">
+          <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg overflow-hidden">
              <EnginePanel stats={activeWhiteStats} side="white" currentFen={fen} />
              <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-green-400">
-               {/* Engine Log Placeholder */}
                <div>[{activeWhiteStats.name}] readyok</div>
              </div>
           </div>
@@ -506,7 +524,7 @@ function App() {
                  <span className="text-gray-400 font-mono text-xs">{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
              </div>
 
-             <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true } }} />
+             <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true } }} shapes={pvShapes} />
 
              {/* White Engine (Bottom) */}
              <div className="w-full flex justify-between items-start px-4 mt-1">
@@ -517,10 +535,9 @@ function App() {
           </div>
 
           {/* Right: Engine B Info (Currently active Black) */}
-          <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg">
+          <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg overflow-hidden">
              <EnginePanel stats={activeBlackStats} side="black" currentFen={fen} />
              <div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-xs text-blue-400">
-                {/* Engine Log Placeholder */}
                 <div>[{activeBlackStats.name}] readyok</div>
              </div>
           </div>

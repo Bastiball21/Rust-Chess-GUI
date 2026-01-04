@@ -7,9 +7,10 @@ interface BoardProps {
     lastMove?: string[];
     orientation?: 'white' | 'black';
     config?: any;
+    shapes?: any[]; // Array of shapes for arrows/circles
 }
 
-export const Board: React.FC<BoardProps> = ({ fen, lastMove, orientation = 'white' }) => {
+export const Board: React.FC<BoardProps> = ({ fen, lastMove, orientation = 'white', config = {}, shapes = [] }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [size, setSize] = useState(0);
 
@@ -26,6 +27,21 @@ export const Board: React.FC<BoardProps> = ({ fen, lastMove, orientation = 'whit
         return () => resizeObserver.disconnect();
     }, []);
 
+    // Merge passed config with required overrides
+    const finalConfig = {
+        ...config,
+        movable: {
+            free: false,
+            color: undefined,
+            dests: new Map(), // View only for now
+            ...(config.movable || {})
+        },
+        drawable: {
+            shapes: shapes,
+            ...(config.drawable || {})
+        }
+    };
+
     return (
         <div ref={containerRef} className="w-full h-full flex justify-center items-center bg-gray-800" style={{ overflow: 'hidden' }}>
             {size > 0 && (
@@ -35,14 +51,10 @@ export const Board: React.FC<BoardProps> = ({ fen, lastMove, orientation = 'whit
                         orientation={orientation}
                         turnColor="white"
                         animation={{ enabled: true }}
-                        movable={{
-                            free: false,
-                            color: undefined,
-                            dests: new Map(), // View only for now
-                        }}
                         lastMove={lastMove as any}
                         width="100%"
                         height="100%"
+                        config={finalConfig}
                     />
                 </div>
             )}
