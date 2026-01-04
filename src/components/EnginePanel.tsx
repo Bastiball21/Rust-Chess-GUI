@@ -48,22 +48,7 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, currentFe
                 </span>
             </div>
             <div className="flex gap-2 h-full min-h-0">
-                {/* Left: Stats & Text PV */}
-                <div className="flex-1 flex flex-col min-w-0">
-                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-mono text-gray-400 mb-2">
-                        <span className="whitespace-nowrap">D: <span className="text-gray-200">{stats.depth || 0}</span></span>
-                        <span className="whitespace-nowrap">NPS: <span className="text-gray-200">{stats.nps ? (stats.nps / 1000).toFixed(0) + "k" : 0}</span></span>
-                        <span className="whitespace-nowrap">N: <span className="text-gray-200">{stats.nodes ? (stats.nodes / 1000000).toFixed(1) + "M" : 0}</span></span>
-                    </div>
-                    <div className="flex-1 bg-gray-950 p-2 rounded font-mono text-[10px] leading-tight overflow-y-auto text-gray-400 mb-2 break-all">
-                        {stats.pv || "Thinking..."}
-                    </div>
-
-                    <div className="text-2xl font-mono text-center py-1 bg-black rounded text-white shrink-0">
-                        {stats.time ? new Date(stats.time).toISOString().substr(14, 5) : "00:00"}
-                    </div>
-                </div>
-                {/* Right: PV Board */}
+                {/* Left: PV Board */}
                 <div className="w-32 shrink-0 bg-gray-800 rounded border border-gray-600 flex items-center justify-center overflow-hidden aspect-square self-center">
                     <div className="w-full h-full pointer-events-none">
                         <Chessground
@@ -78,6 +63,21 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, currentFe
                                 movable: { color: undefined }
                             }}
                         />
+                    </div>
+                </div>
+                {/* Right: Stats & Text PV */}
+                <div className="flex-1 flex flex-col min-w-0">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-mono text-gray-400 mb-2">
+                        <span className="whitespace-nowrap">D: <span className="text-gray-200">{stats.depth || 0}</span></span>
+                        <span className="whitespace-nowrap">NPS: <span className="text-gray-200">{stats.nps ? (stats.nps / 1000).toFixed(0) + "k" : 0}</span></span>
+                        <span className="whitespace-nowrap">N: <span className="text-gray-200">{stats.nodes ? (stats.nodes / 1000000).toFixed(1) + "M" : 0}</span></span>
+                    </div>
+                    <div className="flex-1 bg-gray-950 p-2 rounded font-mono text-[10px] leading-tight overflow-y-auto text-gray-400 mb-2 break-all">
+                        {stats.pv || "Thinking..."}
+                    </div>
+
+                    <div className="text-2xl font-mono text-center py-1 bg-black rounded text-white shrink-0">
+                        {stats.time ? new Date(stats.time).toISOString().substr(14, 5) : "00:00"}
                     </div>
                 </div>
             </div>
