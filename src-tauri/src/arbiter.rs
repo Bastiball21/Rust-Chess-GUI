@@ -346,8 +346,8 @@ fn generate_start_fen(variant: &str) -> String {
 
 fn format_pgn(moves: &[String], result: &str, white_name: &str, black_name: &str, start_fen: &str) -> String {
      let mut pgn = String::new();
-     pgn.push_str("[Event \"Mini-TCEC Tournament\"]\n");
-     pgn.push_str("[Site \"Mini-TCEC\"]\n");
+     pgn.push_str("[Event \"CCRL GUI Tournament\"]\n");
+     pgn.push_str("[Site \"CCRL GUI\"]\n");
      pgn.push_str("[Date \"????.??.??\"]\n");
      pgn.push_str("[Round \"-\"]\n");
      pgn.push_str(&format!("[White \"{}\"]\n", white_name));

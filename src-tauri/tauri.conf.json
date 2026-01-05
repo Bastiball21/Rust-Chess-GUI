@@ -1,7 +1,7 @@
 {
-  "productName": "mini-tcec",
+  "productName": "CCRL GUI",
   "version": "0.1.0",
-  "identifier": "com.minitcec.app",
+  "identifier": "com.ccrl.gui",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "mini-tcec",
+        "title": "CCRL GUI",
         "width": 1280,
         "height": 800
       }
