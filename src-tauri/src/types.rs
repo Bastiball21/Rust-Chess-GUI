@@ -19,6 +19,7 @@ pub struct TournamentConfig {
     pub swap_sides: bool,
     pub opening_fen: Option<String>,
     pub opening_file: Option<String>,
+    pub opening_order: Option<String>, // "sequential" or "random"
     pub variant: String,
     pub concurrency: Option<u32>,
 }

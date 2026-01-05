@@ -4,7 +4,7 @@ use crate::stats::TournamentStats;
 use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode, Outcome};
 use shakmaty::fen::Fen;
 use tokio::sync::{mpsc, Semaphore};
-use tokio::time::{Instant, Duration, sleep};
+use tokio::time::{Instant, Duration, sleep, timeout};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use rand::seq::SliceRandom;
@@ -54,6 +54,13 @@ impl Arbiter {
         let mut openings = Vec::new();
         if let Some(ref path) = config.opening_file {
             openings = load_openings(path).unwrap_or_default();
+        }
+
+        if let Some(order) = &config.opening_order {
+            if order == "random" {
+                let mut rng = rand::thread_rng();
+                openings.shuffle(&mut rng);
+            }
         }
 
         let (pgn_tx, mut pgn_rx) = mpsc::channel::<String>(100);
@@ -202,11 +209,6 @@ impl Arbiter {
                     Ok(e) => e,
                     Err(e) => { println!("Failed to spawn engine {}: {}", eng_b_config.name, e); return; }
                 };
-
-                if config.variant == "chess960" {
-                    let _ = engine_a.send("setoption name UCI_Chess960 value true".into()).await;
-                    let _ = engine_b.send("setoption name UCI_Chess960 value true".into()).await;
-                }
 
                 {
                     let mut active = active_engines.lock().await;
@@ -369,6 +371,52 @@ fn format_pgn(moves: &[String], result: &str, white_name: &str, black_name: &str
      pgn
 }
 
+async fn initialize_engine(engine: &AsyncEngine, config: &crate::types::EngineConfig, variant: &str) -> anyhow::Result<()> {
+    let mut rx = engine.stdout_broadcast.subscribe();
+    engine.send("uci".into()).await?;
+
+    // Wait for uciok
+    let uciok_future = async {
+        while let Ok(line) = rx.recv().await {
+            if line.trim() == "uciok" {
+                return Ok(());
+            }
+        }
+        Err(anyhow::anyhow!("Engine disconnected before uciok"))
+    };
+
+    timeout(Duration::from_secs(10), uciok_future).await
+        .map_err(|_| anyhow::anyhow!("Timeout waiting for uciok from {}", config.name))??;
+
+    // Send options
+    for (name, value) in &config.options {
+        engine.send(format!("setoption name {} value {}", name, value)).await?;
+    }
+
+    // Handle Chess960 option if needed
+    if variant == "chess960" {
+        engine.send("setoption name UCI_Chess960 value true".into()).await?;
+    }
+
+    engine.send("isready".into()).await?;
+
+    // Wait for readyok
+    let readyok_future = async {
+        while let Ok(line) = rx.recv().await {
+            if line.trim() == "readyok" {
+                return Ok(());
+            }
+        }
+        Err(anyhow::anyhow!("Engine disconnected before readyok"))
+    };
+
+    timeout(Duration::from_secs(10), readyok_future).await
+        .map_err(|_| anyhow::anyhow!("Timeout waiting for readyok from {}", config.name))??;
+
+    engine.send("ucinewgame".into()).await?;
+    Ok(())
+}
+
 async fn play_game_static(
     white_engine: &AsyncEngine,
     black_engine: &AsyncEngine,
@@ -392,9 +440,9 @@ async fn play_game_static(
          Board::Standard(pos_std)
     };
 
-    white_engine.send("uci".into()).await?; black_engine.send("uci".into()).await?;
-    sleep(Duration::from_millis(50)).await;
-    white_engine.send("ucinewgame".into()).await?; black_engine.send("ucinewgame".into()).await?;
+    // Initialize engines with proper UCI handshake
+    initialize_engine(white_engine, &config.engines[white_idx], &config.variant).await?;
+    initialize_engine(black_engine, &config.engines[black_idx], &config.variant).await?;
 
     let mut white_time = config.time_control.base_ms as i64;
     let mut black_time = config.time_control.base_ms as i64;
@@ -541,8 +589,17 @@ async fn play_game_static(
             pos.play_unchecked(&m);
             moves_history.push(best_move_str.clone());
         } else {
-             println!("Illegal/Unparseable move: {}", best_move_str);
-             game_result = "*".to_string();
+             println!("Illegal/Unparseable move from {}: {}", if turn == Color::White { "White" } else { "Black" }, best_move_str);
+             // Forfeit the engine that made the illegal move
+             game_result = match turn {
+                 Color::White => "0-1",
+                 Color::Black => "1-0",
+             }.to_string();
+             let _ = game_update_tx.send(GameUpdate {
+                fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
+                move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                game_id
+            }).await;
              break;
         }
 
