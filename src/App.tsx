@@ -303,7 +303,7 @@ function App() {
       {/* Sidebar */}
       <div className="w-80 bg-gray-800 flex flex-col border-r border-gray-700 overflow-hidden shrink-0 z-10 relative">
         <div className="p-4 border-b border-gray-700 bg-gray-850 shrink-0">
-            <h1 className="text-xl font-bold text-center text-blue-400 mb-2">Mini-TCEC</h1>
+            <h1 className="text-xl font-bold text-center text-blue-400 mb-2">CCRL GUI</h1>
 
             {/* Tabs Header */}
             <div className="flex bg-gray-700 rounded p-1">

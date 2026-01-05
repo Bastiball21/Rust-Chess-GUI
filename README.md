@@ -1,6 +1,6 @@
-# Mini-TCEC
+# CCRL GUI
 
-Mini-TCEC is a lightweight tournament manager for chess engines, built with Tauri (Rust) and React (TypeScript). It allows you to run matches and tournaments between UCI-compatible chess engines with a modern, dark-mode UI.
+CCRL GUI is a lightweight tournament manager for chess engines, built with Tauri (Rust) and React (TypeScript). It allows you to run matches and tournaments between UCI-compatible chess engines with a modern, dark-mode UI.
 
 ## Features
 

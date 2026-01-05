@@ -28,6 +28,7 @@ mod tests {
             swap_sides: true,
             opening_fen: None,
             opening_file: None,
+            opening_order: None,
             variant: "standard".to_string(),
             concurrency: Some(1),
         };
