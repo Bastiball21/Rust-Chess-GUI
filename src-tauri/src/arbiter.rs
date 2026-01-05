@@ -4,7 +4,7 @@ use crate::stats::TournamentStats;
 use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode, Outcome};
 use shakmaty::fen::Fen;
 use tokio::sync::{mpsc, Semaphore};
-use tokio::time::{Instant, Duration, sleep};
+use tokio::time::{Instant, Duration, sleep, timeout};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use rand::seq::SliceRandom;
@@ -54,6 +54,13 @@ impl Arbiter {
         let mut openings = Vec::new();
         if let Some(ref path) = config.opening_file {
             openings = load_openings(path).unwrap_or_default();
+        }
+
+        if let Some(order) = &config.opening_order {
+            if order == "random" {
+                let mut rng = rand::thread_rng();
+                openings.shuffle(&mut rng);
+            }
         }
 
         let (pgn_tx, mut pgn_rx) = mpsc::channel::<String>(100);
@@ -369,15 +376,17 @@ async fn initialize_engine(engine: &AsyncEngine, config: &crate::types::EngineCo
     engine.send("uci".into()).await?;
 
     // Wait for uciok
-    let start = Instant::now();
-    while let Ok(line) = rx.recv().await {
-        if line.trim() == "uciok" {
-            break;
+    let uciok_future = async {
+        while let Ok(line) = rx.recv().await {
+            if line.trim() == "uciok" {
+                return Ok(());
+            }
         }
-        if start.elapsed().as_secs() > 10 {
-            return Err(anyhow::anyhow!("Timeout waiting for uciok from {}", config.name));
-        }
-    }
+        Err(anyhow::anyhow!("Engine disconnected before uciok"))
+    };
+
+    timeout(Duration::from_secs(10), uciok_future).await
+        .map_err(|_| anyhow::anyhow!("Timeout waiting for uciok from {}", config.name))??;
 
     // Send options
     for (name, value) in &config.options {
@@ -392,15 +401,17 @@ async fn initialize_engine(engine: &AsyncEngine, config: &crate::types::EngineCo
     engine.send("isready".into()).await?;
 
     // Wait for readyok
-    let start = Instant::now();
-    while let Ok(line) = rx.recv().await {
-        if line.trim() == "readyok" {
-            break;
+    let readyok_future = async {
+        while let Ok(line) = rx.recv().await {
+            if line.trim() == "readyok" {
+                return Ok(());
+            }
         }
-        if start.elapsed().as_secs() > 10 {
-             return Err(anyhow::anyhow!("Timeout waiting for readyok from {}", config.name));
-        }
-    }
+        Err(anyhow::anyhow!("Engine disconnected before readyok"))
+    };
+
+    timeout(Duration::from_secs(10), readyok_future).await
+        .map_err(|_| anyhow::anyhow!("Timeout waiting for readyok from {}", config.name))??;
 
     engine.send("ucinewgame".into()).await?;
     Ok(())
