@@ -2,10 +2,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EngineConfig {
+    pub id: Option<String>, // Added ID for DB reference
     pub name: String,
     pub path: String,
     pub options: Vec<(String, String)>,
-    pub country_code: Option<String>, // Added country_code
+    pub country_code: Option<String>,
+    pub args: Option<Vec<String>>, // Added for Cutechess compat
+    pub working_directory: Option<String>, // Added for Cutechess compat
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -27,6 +30,8 @@ pub struct TournamentConfig {
     pub opening_order: Option<String>,
     pub variant: String,
     pub concurrency: Option<u32>,
+    pub pgn_path: Option<String>, // Added for PGN saving
+    pub event_name: Option<String>, // Added for PGN header
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -65,10 +65,12 @@ impl Arbiter {
 
         let (pgn_tx, mut pgn_rx) = mpsc::channel::<String>(100);
 
+        let pgn_path = config.pgn_path.clone().unwrap_or_else(|| "tournament.pgn".to_string());
+
         tokio::spawn(async move {
              use std::io::Write;
              while let Some(pgn) = pgn_rx.recv().await {
-                 if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tournament.pgn") {
+                 if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
                      let _ = file.write_all(pgn.as_bytes());
                  }
              }
@@ -282,7 +284,8 @@ impl Arbiter {
 
                     let white_name_pgn = &config.engines[white_idx].name;
                     let black_name_pgn = &config.engines[black_idx].name;
-                    let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen);
+                    let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
+                    let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen, event_name, game_id);
                     let _ = pgn_tx.send(pgn).await;
 
                     {
@@ -362,12 +365,13 @@ fn generate_start_fen(variant: &str) -> String {
     } else { "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string() }
 }
 
-fn format_pgn(moves: &[String], result: &str, white_name: &str, black_name: &str, start_fen: &str) -> String {
+fn format_pgn(moves: &[String], result: &str, white_name: &str, black_name: &str, start_fen: &str, event: &str, round: usize) -> String {
      let mut pgn = String::new();
-     pgn.push_str("[Event \"CCRL GUI Tournament\"]\n");
+     pgn.push_str(&format!("[Event \"{}\"]\n", event));
      pgn.push_str("[Site \"CCRL GUI\"]\n");
-     pgn.push_str("[Date \"????.??.??\"]\n");
-     pgn.push_str("[Round \"-\"]\n");
+     let date = chrono::Local::now().format("%Y.%m.%d");
+     pgn.push_str(&format!("[Date \"{}\"]\n", date));
+     pgn.push_str(&format!("[Round \"{}\"]\n", round));
      pgn.push_str(&format!("[White \"{}\"]\n", white_name));
      pgn.push_str(&format!("[Black \"{}\"]\n", black_name));
      pgn.push_str(&format!("[Result \"{}\"]\n", result));
