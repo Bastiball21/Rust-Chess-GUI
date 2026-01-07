@@ -10,7 +10,7 @@ import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { appDataDir } from "@tauri-apps/api/path";
-import { Cog, Plus, Trash2, FolderOpen, Save, Database, Play } from 'lucide-react';
+import { Cog, Plus, Trash2, FolderOpen, Save, Database, Play, ChevronDown, ChevronRight } from 'lucide-react';
 
 const COUNTRIES: Record<string, string> = {
     "us": "United States", "gb": "United Kingdom", "de": "Germany", "fr": "France",
@@ -140,6 +140,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'settings' | 'schedule'>('settings');
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
+  const [logsExpanded, setLogsExpanded] = useState(false);
 
   const selectedGameIdRef = useRef<number | null>(null);
   const gameStates = useRef<Record<number, GameStateData>>({});
@@ -432,7 +433,7 @@ function App() {
 
       {/* Sidebar */}
       <div className="w-96 bg-gray-800 flex flex-col border-r border-gray-700 overflow-hidden shrink-0 z-10 relative">
-        <div className="p-4 border-b border-gray-700 bg-gray-850 shrink-0">
+        <div className="p-4 border-b border-gray-700 bg-gray-900 shrink-0">
             <h1 className="text-2xl font-bold text-center text-blue-400 mb-2">CCRL GUI</h1>
             <div className="flex bg-gray-700 rounded p-1">
                 <button className={`flex-1 text-sm font-bold py-2 rounded ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`} onClick={() => setActiveTab('settings')}>SETTINGS</button>
@@ -567,7 +568,18 @@ function App() {
         <div className="grid grid-cols-3 gap-4 h-[70vh] min-h-0">
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg overflow-hidden">
              <EnginePanel stats={activeWhiteStats} side="white" />
-             <div className="flex-1 min-h-0 flex gap-2"><PvBoard pv={activeWhiteStats.pv} currentFen={fen} side="white" /><div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-sm text-green-400"><div>[{activeWhiteStats.name}] readyok</div></div></div>
+             <div className="flex-1 min-h-0 flex gap-2">
+                 <PvBoard pv={activeWhiteStats.pv} currentFen={fen} side="white" />
+                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 ${logsExpanded ? "flex-1" : "h-32"}`}>
+                     <div className="flex justify-between items-center bg-gray-800 px-2 py-1 cursor-pointer hover:bg-gray-700" onClick={() => setLogsExpanded(!logsExpanded)}>
+                        <span className="text-[10px] uppercase font-bold text-gray-500">Engine Log</span>
+                        {logsExpanded ? <ChevronDown size={12} className="text-gray-400"/> : <ChevronRight size={12} className="text-gray-400"/>}
+                     </div>
+                     <div className="flex-1 p-2 overflow-y-auto font-mono text-xs text-green-400">
+                         <div>[{activeWhiteStats.name}] readyok</div>
+                     </div>
+                 </div>
+             </div>
           </div>
 
           {/* Board & Scoreboard */}
@@ -586,7 +598,18 @@ function App() {
 
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg overflow-hidden">
              <EnginePanel stats={activeBlackStats} side="black" />
-             <div className="flex-1 min-h-0 flex gap-2"><PvBoard pv={activeBlackStats.pv} currentFen={fen} side="black" /><div className="flex-1 bg-gray-900 rounded border border-gray-700 p-2 overflow-y-auto font-mono text-sm text-blue-400"><div>[{activeBlackStats.name}] readyok</div></div></div>
+             <div className="flex-1 min-h-0 flex gap-2">
+                 <PvBoard pv={activeBlackStats.pv} currentFen={fen} side="black" />
+                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 ${logsExpanded ? "flex-1" : "h-32"}`}>
+                     <div className="flex justify-between items-center bg-gray-800 px-2 py-1 cursor-pointer hover:bg-gray-700" onClick={() => setLogsExpanded(!logsExpanded)}>
+                        <span className="text-[10px] uppercase font-bold text-gray-500">Engine Log</span>
+                        {logsExpanded ? <ChevronDown size={12} className="text-gray-400"/> : <ChevronRight size={12} className="text-gray-400"/>}
+                     </div>
+                     <div className="flex-1 p-2 overflow-y-auto font-mono text-xs text-blue-400">
+                         <div>[{activeBlackStats.name}] readyok</div>
+                     </div>
+                 </div>
+             </div>
           </div>
         </div>
 
@@ -602,7 +625,12 @@ function App() {
 
 const Flag: React.FC<{ code?: string }> = ({ code }) => {
     if (!code) return null;
-    return <img src={`https://flagcdn.com/w40/${code.toLowerCase()}.png`} width="20" alt={code} className="rounded-sm shadow-sm" />;
+    // Simple text badge for offline/Windows stability
+    return (
+        <span className="bg-gray-700 text-gray-300 font-mono text-xs px-1.5 py-0.5 rounded border border-gray-600 select-none">
+            {code.toUpperCase()}
+        </span>
+    );
 };
 
 export default App;
