@@ -3,7 +3,7 @@ use crate::types::{TournamentConfig, TournamentMode, GameUpdate, EngineStats, Sc
 use crate::stats::TournamentStats;
 use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode, Outcome};
 use shakmaty::fen::Fen;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{mpsc, Semaphore, broadcast};
 use tokio::time::{Instant, Duration, sleep, timeout};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -65,10 +65,12 @@ impl Arbiter {
 
         let (pgn_tx, mut pgn_rx) = mpsc::channel::<String>(100);
 
+        let pgn_path = config.pgn_path.clone().unwrap_or_else(|| "tournament.pgn".to_string());
+
         tokio::spawn(async move {
              use std::io::Write;
              while let Some(pgn) = pgn_rx.recv().await {
-                 if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tournament.pgn") {
+                 if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
                      let _ = file.write_all(pgn.as_bytes());
                  }
              }
@@ -225,16 +227,28 @@ impl Arbiter {
 
                 let stop_listen_a = should_stop.clone();
                 tokio::spawn(async move {
-                    while let Ok(line) = a_rx.recv().await {
-                        if *stop_listen_a.lock().await { break; }
-                        if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_a_val, game_id) { let _ = stats_tx_a.send(stats).await; } }
+                    loop {
+                        match a_rx.recv().await {
+                            Ok(line) => {
+                                if *stop_listen_a.lock().await { break; }
+                                if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_a_val, game_id) { let _ = stats_tx_a.send(stats).await; } }
+                            },
+                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(broadcast::error::RecvError::Closed) => break,
+                        }
                     }
                 });
                 let stop_listen_b = should_stop.clone();
                 tokio::spawn(async move {
-                    while let Ok(line) = b_rx.recv().await {
-                         if *stop_listen_b.lock().await { break; }
-                         if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_b_val, game_id) { let _ = stats_tx_b.send(stats).await; } }
+                    loop {
+                        match b_rx.recv().await {
+                            Ok(line) => {
+                                if *stop_listen_b.lock().await { break; }
+                                if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_b_val, game_id) { let _ = stats_tx_b.send(stats).await; } }
+                            },
+                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(broadcast::error::RecvError::Closed) => break,
+                        }
                     }
                 });
 
@@ -270,7 +284,8 @@ impl Arbiter {
 
                     let white_name_pgn = &config.engines[white_idx].name;
                     let black_name_pgn = &config.engines[black_idx].name;
-                    let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen);
+                    let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
+                    let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen, event_name, game_id);
                     let _ = pgn_tx.send(pgn).await;
 
                     {
@@ -311,11 +326,17 @@ impl Arbiter {
 
     pub async fn stop(&self) {
         *self.should_stop.lock().await = true;
-        let mut active = self.active_engines.lock().await;
-        for engine in active.iter() {
+
+        let engines_to_stop = {
+            let mut active = self.active_engines.lock().await;
+            let engines = active.clone();
+            active.clear();
+            engines
+        };
+
+        for engine in engines_to_stop {
             let _ = engine.quit().await;
         }
-        active.clear();
     }
 }
 
@@ -344,12 +365,13 @@ fn generate_start_fen(variant: &str) -> String {
     } else { "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string() }
 }
 
-fn format_pgn(moves: &[String], result: &str, white_name: &str, black_name: &str, start_fen: &str) -> String {
+fn format_pgn(moves: &[String], result: &str, white_name: &str, black_name: &str, start_fen: &str, event: &str, round: usize) -> String {
      let mut pgn = String::new();
-     pgn.push_str("[Event \"CCRL GUI Tournament\"]\n");
+     pgn.push_str(&format!("[Event \"{}\"]\n", event));
      pgn.push_str("[Site \"CCRL GUI\"]\n");
-     pgn.push_str("[Date \"????.??.??\"]\n");
-     pgn.push_str("[Round \"-\"]\n");
+     let date = chrono::Local::now().format("%Y.%m.%d");
+     pgn.push_str(&format!("[Date \"{}\"]\n", date));
+     pgn.push_str(&format!("[Round \"{}\"]\n", round));
      pgn.push_str(&format!("[White \"{}\"]\n", white_name));
      pgn.push_str(&format!("[Black \"{}\"]\n", black_name));
      pgn.push_str(&format!("[Result \"{}\"]\n", result));
@@ -377,12 +399,22 @@ async fn initialize_engine(engine: &AsyncEngine, config: &crate::types::EngineCo
 
     // Wait for uciok
     let uciok_future = async {
-        while let Ok(line) = rx.recv().await {
-            if line.trim() == "uciok" {
-                return Ok(());
+        loop {
+            match rx.recv().await {
+                Ok(line) => {
+                    if line.trim() == "uciok" {
+                        return Ok(());
+                    }
+                },
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    println!("Warning: Lagged waiting for uciok from {}", config.name);
+                    continue;
+                },
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(anyhow::anyhow!("Engine disconnected before uciok"));
+                }
             }
         }
-        Err(anyhow::anyhow!("Engine disconnected before uciok"))
     };
 
     timeout(Duration::from_secs(10), uciok_future).await
@@ -402,12 +434,22 @@ async fn initialize_engine(engine: &AsyncEngine, config: &crate::types::EngineCo
 
     // Wait for readyok
     let readyok_future = async {
-        while let Ok(line) = rx.recv().await {
-            if line.trim() == "readyok" {
-                return Ok(());
+        loop {
+            match rx.recv().await {
+                Ok(line) => {
+                    if line.trim() == "readyok" {
+                        return Ok(());
+                    }
+                },
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    println!("Warning: Lagged waiting for readyok from {}", config.name);
+                    continue;
+                },
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(anyhow::anyhow!("Engine disconnected before readyok"));
+                }
             }
         }
-        Err(anyhow::anyhow!("Engine disconnected before readyok"))
     };
 
     timeout(Duration::from_secs(10), readyok_future).await
@@ -509,19 +551,61 @@ async fn play_game_static(
         let mut best_move_str = String::new();
         let mut move_score: Option<i32> = None;
 
-        while let Ok(line) = active_rx.recv().await {
-            if line.starts_with("info") {
-                if let Some(stats) = parse_info(&line, 0) {
-                    if let Some(cp) = stats.score_cp {
-                         move_score = Some(cp);
-                    } else if let Some(mate) = stats.score_mate {
-                         move_score = Some(if mate > 0 { 30000 - mate } else { -30000 - mate });
-                    }
-                }
+        let time_left = if turn == Color::White { white_time } else { black_time };
+        // Timeout: Remaining time + 5s buffer, capped at 24h
+        let timeout_ms = (time_left + 5000).max(5000) as u64;
+        let max_cap_ms = 24 * 60 * 60 * 1000;
+        let timeout_duration = Duration::from_millis(timeout_ms.min(max_cap_ms));
+
+        let bestmove_future = async {
+            loop {
+                 match active_rx.recv().await {
+                     Ok(line) => {
+                        if line.starts_with("info") {
+                            if let Some(stats) = parse_info(&line, 0) {
+                                if let Some(cp) = stats.score_cp {
+                                     move_score = Some(cp);
+                                } else if let Some(mate) = stats.score_mate {
+                                     move_score = Some(if mate > 0 { 30000 - mate } else { -30000 - mate });
+                                }
+                            }
+                        }
+                        if line.starts_with("bestmove") {
+                            let parts: Vec<&str> = line.split_whitespace().collect();
+                            if parts.len() > 1 { best_move_str = parts[1].to_string(); }
+                            return Ok(());
+                        }
+                     },
+                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                     Err(broadcast::error::RecvError::Closed) => {
+                         return Err(anyhow::anyhow!("Engine disconnected"));
+                     }
+                 }
             }
-            if line.starts_with("bestmove") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 1 { best_move_str = parts[1].to_string(); }
+        };
+
+        match timeout(timeout_duration, bestmove_future).await {
+            Ok(Ok(_)) => {},
+            Ok(Err(e)) => {
+                 // Engine disconnected/closed
+                 println!("Engine error: {}", e);
+                 game_result = match turn { Color::White => "0-1", Color::Black => "1-0" }.to_string();
+                 let _ = game_update_tx.send(GameUpdate {
+                    fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
+                    move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                    game_id
+                }).await;
+                break;
+            },
+            Err(_) => {
+                 // Timed out
+                 println!("Engine timed out!");
+                 game_result = match turn { Color::White => "0-1", Color::Black => "1-0" }.to_string();
+                 let _ = game_update_tx.send(GameUpdate {
+                    fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
+                    move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                    game_id
+                }).await;
                 break;
             }
         }
