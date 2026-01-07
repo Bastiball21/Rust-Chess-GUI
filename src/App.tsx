@@ -4,12 +4,13 @@ import { EnginePanel } from "./components/EnginePanel";
 import { PvBoard } from "./components/PvBoard";
 import { EvalGraph } from "./components/EvalGraph";
 import { MoveList } from "./components/MoveList";
+import { Flag } from "./components/Flag";
 import EngineManager from "./components/EngineManager";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { appDataDir } from "@tauri-apps/api/path";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import { Cog, Plus, Trash2, FolderOpen, Save, Database, Play, ChevronDown, ChevronRight } from 'lucide-react';
 
 const COUNTRIES: Record<string, string> = {
@@ -179,7 +180,6 @@ function App() {
     store.save();
   }, [engines, engineLibrary, store]);
 
-  // One-time listener registration (omitted detailed implementation for brevity as it's same as before)
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
         const u = event.payload as GameUpdate;
@@ -283,7 +283,7 @@ function App() {
 
     // PGN path handling
     const appDir = await appDataDir();
-    const pgnPath = `${appDir}/tournament.pgn`; // Simplified. Ideally use join.
+    const pgnPath = await join(appDir, "tournament.pgn");
 
     const config = {
       mode: tournamentMode, engines: engines, time_control: { base_ms: baseMs, inc_ms: incMs },
@@ -353,16 +353,12 @@ function App() {
       };
       const path = await save({ filters: [{ name: 'JSON', extensions: ['json'] }] });
       if (path) {
-          // Mock save since we need fs plugin.
-          // Assuming user might just want to store in app settings for now?
-          // For now alert.
           alert("Save preset logic ready, but requires FS access. Data prepared.");
           console.log(JSON.stringify(preset));
       }
   };
 
   const loadPreset = async () => {
-      // Mock load
       const selected = await open({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
       if (selected) {
            alert("Load preset logic ready. Requires FS access to read file content.");
@@ -477,7 +473,7 @@ function App() {
                                 <div key={idx} className="bg-gray-700 p-2 rounded flex flex-col gap-1 relative border border-gray-600">
                                     <div className="flex justify-between items-center gap-2">
                                         <div className="flex items-center gap-1 w-full">
-                                            {eng.country_code && <img src={`https://flagcdn.com/w20/${eng.country_code}.png`} className="w-4 h-3" />}
+                                            <Flag code={eng.country_code} />
                                             <input className="bg-transparent text-sm font-bold border-b border-gray-600 focus:border-blue-500 outline-none w-full" value={eng.name} onChange={(e) => updateEngineName(idx, e.target.value)} />
                                         </div>
                                         <div className="flex gap-1">
@@ -486,10 +482,9 @@ function App() {
                                         </div>
                                     </div>
                                     <div className="flex gap-1">
-                                        <input className="bg-gray-600 p-1 rounded w-full text-[10px]" value={eng.path} onChange={(e) => updateEnginePath(idx, e.target.value)} title={eng.path} />
-                                        <button className="bg-blue-600 px-2 rounded hover:bg-blue-500 text-[10px] flex items-center justify-center" onClick={() => selectFileForEngine(idx)}><FolderOpen size={10} /></button>
+                                        <input className="bg-gray-600 p-1 rounded w-full text-xs" value={eng.path} onChange={(e) => updateEnginePath(idx, e.target.value)} title={eng.path} />
+                                        <button className="bg-blue-600 px-2 rounded hover:bg-blue-500 text-xs flex items-center justify-center" onClick={() => selectFileForEngine(idx)}><FolderOpen size={10} /></button>
                                     </div>
-                                    {/* Quick add from library dropdown could go here, but omitted for simplicity */}
                                 </div>
                             ))}
                         </div>
@@ -499,7 +494,7 @@ function App() {
                         <label className="text-sm font-semibold text-gray-400 uppercase">Time Control</label>
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <span className="text-[10px] text-gray-500 block mb-1">Base (H:M:S)</span>
+                                <span className="text-sm text-gray-500 block mb-1">Base (H:M:S)</span>
                                 <div className="flex gap-1">
                                     <input type="number" className="bg-gray-700 p-1 rounded w-full text-sm text-center" value={baseH} onChange={(e) => setBaseH(parseInt(e.target.value) || 0)} />
                                     <span className="text-gray-500">:</span>
@@ -509,7 +504,7 @@ function App() {
                                 </div>
                             </div>
                             <div>
-                                <span className="text-[10px] text-gray-500 block mb-1">Inc (H:M:S)</span>
+                                <span className="text-sm text-gray-500 block mb-1">Inc (H:M:S)</span>
                                 <div className="flex gap-1">
                                     <input type="number" className="bg-gray-700 p-1 rounded w-full text-sm text-center" value={incH} onChange={(e) => setIncH(parseInt(e.target.value) || 0)} />
                                     <span className="text-gray-500">:</span>
@@ -524,8 +519,8 @@ function App() {
                         <label className="text-sm font-semibold text-gray-400 uppercase">Opening</label>
                         <div className="flex justify-between items-center mb-1">
                             <div className="flex bg-gray-700 rounded p-0.5">
-                                <button className={`px-2 py-0.5 text-[10px] rounded ${openingMode === 'fen' ? 'bg-blue-600 text-white' : 'text-gray-400'}`} onClick={() => setOpeningMode('fen')}>FEN</button>
-                                <button className={`px-2 py-0.5 text-[10px] rounded ${openingMode === 'file' ? 'bg-blue-600 text-white' : 'text-gray-400'}`} onClick={() => setOpeningMode('file')}>FILE</button>
+                                <button className={`px-2 py-0.5 text-xs rounded ${openingMode === 'fen' ? 'bg-blue-600 text-white' : 'text-gray-400'}`} onClick={() => setOpeningMode('fen')}>FEN</button>
+                                <button className={`px-2 py-0.5 text-xs rounded ${openingMode === 'file' ? 'bg-blue-600 text-white' : 'text-gray-400'}`} onClick={() => setOpeningMode('file')}>FILE</button>
                             </div>
                         </div>
                         {openingMode === 'fen' ? (
@@ -557,7 +552,7 @@ function App() {
                 </div>
             )}
         </div>
-        <div className="p-4 border-t border-gray-700 bg-gray-850 shrink-0">
+        <div className="p-4 border-t border-gray-700 bg-gray-900 shrink-0">
              {!matchRunning ? <button className="bg-green-600 p-3 rounded font-bold hover:bg-green-500 w-full flex items-center justify-center gap-2" onClick={startMatch}><Play size={20}/> START</button> : <button className="bg-red-600 p-3 rounded font-bold hover:bg-red-500 w-full" onClick={stopMatch}>STOP</button>}
         </div>
       </div>
@@ -570,9 +565,9 @@ function App() {
              <EnginePanel stats={activeWhiteStats} side="white" />
              <div className="flex-1 min-h-0 flex gap-2">
                  <PvBoard pv={activeWhiteStats.pv} currentFen={fen} side="white" />
-                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 ${logsExpanded ? "flex-1" : "h-32"}`}>
+                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 h-full ${logsExpanded ? "flex-1 min-w-[12rem]" : "w-48"}`}>
                      <div className="flex justify-between items-center bg-gray-800 px-2 py-1 cursor-pointer hover:bg-gray-700" onClick={() => setLogsExpanded(!logsExpanded)}>
-                        <span className="text-[10px] uppercase font-bold text-gray-500">Engine Log</span>
+                        <span className="text-sm uppercase font-bold text-gray-500">Engine Log</span>
                         {logsExpanded ? <ChevronDown size={12} className="text-gray-400"/> : <ChevronRight size={12} className="text-gray-400"/>}
                      </div>
                      <div className="flex-1 p-2 overflow-y-auto font-mono text-xs text-green-400">
@@ -600,9 +595,9 @@ function App() {
              <EnginePanel stats={activeBlackStats} side="black" />
              <div className="flex-1 min-h-0 flex gap-2">
                  <PvBoard pv={activeBlackStats.pv} currentFen={fen} side="black" />
-                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 ${logsExpanded ? "flex-1" : "h-32"}`}>
+                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 h-full ${logsExpanded ? "flex-1 min-w-[12rem]" : "w-48"}`}>
                      <div className="flex justify-between items-center bg-gray-800 px-2 py-1 cursor-pointer hover:bg-gray-700" onClick={() => setLogsExpanded(!logsExpanded)}>
-                        <span className="text-[10px] uppercase font-bold text-gray-500">Engine Log</span>
+                        <span className="text-sm uppercase font-bold text-gray-500">Engine Log</span>
                         {logsExpanded ? <ChevronDown size={12} className="text-gray-400"/> : <ChevronRight size={12} className="text-gray-400"/>}
                      </div>
                      <div className="flex-1 p-2 overflow-y-auto font-mono text-xs text-blue-400">
@@ -622,15 +617,5 @@ function App() {
     </div>
   );
 }
-
-const Flag: React.FC<{ code?: string }> = ({ code }) => {
-    if (!code) return null;
-    // Simple text badge for offline/Windows stability
-    return (
-        <span className="bg-gray-700 text-gray-300 font-mono text-xs px-1.5 py-0.5 rounded border border-gray-600 select-none">
-            {code.toUpperCase()}
-        </span>
-    );
-};
 
 export default App;

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Settings } from 'lucide-react';
+import { Flag } from './Flag';
 
 interface EnginePanelProps {
     stats: {
@@ -22,20 +23,6 @@ const formatTime = (ms: number) => {
     const m = Math.floor(totalSeconds / 60);
     const s = totalSeconds % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
-};
-
-// Simple flag component using flagcdn
-const Flag: React.FC<{ code?: string }> = ({ code }) => {
-    if (!code) return null;
-    return (
-        <img
-            src={`https://flagcdn.com/w40/${code.toLowerCase()}.png`}
-            srcSet={`https://flagcdn.com/w80/${code.toLowerCase()}.png 2x`}
-            width="20"
-            alt={code}
-            className="rounded-sm shadow-sm"
-        />
-    );
 };
 
 export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, onSettingsClick }) => {
@@ -82,7 +69,7 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, onSetting
              </div>
 
              <div className="flex-1 bg-gray-900/30 rounded p-2 overflow-y-auto min-h-0 border border-gray-700/50">
-                <span className="text-[10px] text-gray-500 block mb-1">PV</span>
+                <span className="text-sm text-gray-500 block mb-1">PV</span>
                 <p className="text-xs font-mono text-gray-300 break-words leading-tight">
                     {stats.pv || "..."}
                 </p>
