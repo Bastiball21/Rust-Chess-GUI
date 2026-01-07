@@ -158,7 +158,7 @@ const EngineManager: React.FC<EngineManagerProps> = ({ engines, onUpdate, onClos
             ))}
         </div>
 
-        <div className="p-4 border-t border-gray-700 flex justify-between bg-gray-850">
+        <div className="p-4 border-t border-gray-700 flex justify-between bg-gray-900">
             <button onClick={addEngine} className="bg-green-600 px-4 py-2 rounded font-bold hover:bg-green-500 flex items-center gap-2"><Plus size={18}/> Add Engine</button>
             <button onClick={saveChanges} className="bg-blue-600 px-6 py-2 rounded font-bold hover:bg-blue-500">Save Changes</button>
         </div>
