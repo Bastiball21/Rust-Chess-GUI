@@ -41,8 +41,8 @@ impl AsyncEngine {
 
         let mut child = cmd.spawn().context(format!("Failed to spawn engine at {}", path))?;
 
-        let stdin = child.stdin.take().expect("Failed to open stdin");
-        let stdout = child.stdout.take().expect("Failed to open stdout");
+        let stdin = child.stdin.take().context("Failed to open stdin")?;
+        let stdout = child.stdout.take().context("Failed to open stdout")?;
 
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(100);
         let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);

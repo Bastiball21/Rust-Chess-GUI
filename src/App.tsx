@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Board } from "./components/Board";
 import { EnginePanel } from "./components/EnginePanel";
 import { PvBoard } from "./components/PvBoard";
@@ -9,11 +9,8 @@ import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Cog, Plus, Trash2, FolderOpen } from 'lucide-react';
-import countries from "./countries.json"; // We will create this or inline it
 
 // Inline country list for simplicity if file doesn't exist yet, but cleaner to have a file.
-// For now, I'll assume we can just use a simple list or fetch it?
-// Actually, let's just make a simple object here to avoid file IO issues in this turn.
 const COUNTRIES: Record<string, string> = {
     "us": "United States", "gb": "United Kingdom", "de": "Germany", "fr": "France",
     "ru": "Russia", "cn": "China", "in": "India", "it": "Italy", "es": "Spain",
@@ -64,6 +61,30 @@ interface ScheduledGame {
   result: string | null;
 }
 
+interface GameStateData {
+    fen: string;
+    moves: string[];
+    lastMove: string[];
+    activeWhiteStats: { name: string; score: number; pv: string; time: number; country_code: string };
+    activeBlackStats: { name: string; score: number; pv: string; time: number; country_code: string };
+    matchResult: string | null;
+    evalHistory: any[];
+    whiteEngineIdx: number;
+    blackEngineIdx: number;
+}
+
+const INITIAL_GAME_STATE: GameStateData = {
+    fen: "start",
+    moves: [],
+    lastMove: [],
+    activeWhiteStats: { name: "White", score: 0, pv: "", time: 0, country_code: "" },
+    activeBlackStats: { name: "Black", score: 0, pv: "", time: 0, country_code: "" },
+    matchResult: null,
+    evalHistory: [],
+    whiteEngineIdx: 0,
+    blackEngineIdx: 1
+};
+
 function App() {
   const [fen, setFen] = useState("start");
   const [lastMove, setLastMove] = useState<string[]>([]);
@@ -82,6 +103,13 @@ function App() {
     { name: "Engine 1", path: "mock-engine", options: [] },
     { name: "Engine 2", path: "mock-engine", options: [] }
   ]);
+  const enginesRef = useRef(engines); // Ref for access inside listeners
+
+  // Keep enginesRef in sync
+  useEffect(() => {
+    enginesRef.current = engines;
+  }, [engines]);
+
 
   const [gamesCount, setGamesCount] = useState(10);
   const [concurrency, setConcurrency] = useState(4);
@@ -105,6 +133,10 @@ function App() {
   const [activeTab, setActiveTab] = useState<'settings' | 'schedule'>('settings');
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
+
+  // Refs for persistence and listener access
+  const selectedGameIdRef = useRef<number | null>(null);
+  const gameStates = useRef<Record<number, GameStateData>>({});
 
   const [tournamentStats, setTournamentStats] = useState<any>(null);
 
@@ -138,42 +170,95 @@ function App() {
     store.set("engines", engines).then(() => store.save());
   }, [engines, store]);
 
+  // One-time listener registration
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
       const u = event.payload as GameUpdate;
-      if (selectedGameId === null && u.game_id) setSelectedGameId(u.game_id);
-      if (selectedGameId !== null && u.game_id !== selectedGameId) return;
+      const gameId = u.game_id;
 
-      setFen(u.fen);
+      // Initialize state for new game if needed
+      if (!gameStates.current[gameId]) {
+          gameStates.current[gameId] = JSON.parse(JSON.stringify(INITIAL_GAME_STATE));
+          // Try to set engine names immediately if possible
+          const allEngines = enginesRef.current;
+          if (allEngines.length > u.white_engine_idx) {
+             gameStates.current[gameId].activeWhiteStats.name = allEngines[u.white_engine_idx].name;
+             gameStates.current[gameId].activeWhiteStats.country_code = allEngines[u.white_engine_idx].country_code || "";
+          }
+          if (allEngines.length > u.black_engine_idx) {
+             gameStates.current[gameId].activeBlackStats.name = allEngines[u.black_engine_idx].name;
+             gameStates.current[gameId].activeBlackStats.country_code = allEngines[u.black_engine_idx].country_code || "";
+          }
+      }
+
+      const state = gameStates.current[gameId];
+      state.fen = u.fen;
+      state.whiteEngineIdx = u.white_engine_idx;
+      state.blackEngineIdx = u.black_engine_idx;
+      state.activeWhiteStats.time = u.white_time;
+      state.activeBlackStats.time = u.black_time;
+
       if (u.last_move) {
-        setMoves(prev => [...prev, u.last_move!]);
+        state.moves.push(u.last_move);
         const from = u.last_move.substring(0, 2);
         const to = u.last_move.substring(2, 4);
-        setLastMove([from, to]);
+        state.lastMove = [from, to];
+
+        // Update eval history
+        // Note: score is updated by engine-stats, but we snapshat it here
+        state.evalHistory.push({ moveNumber: state.moves.length, score: state.activeWhiteStats.score || 0 });
       }
-      setWhiteEngineIdx(u.white_engine_idx);
-      setBlackEngineIdx(u.black_engine_idx);
 
-      // Update times (fallback if TimeUpdate misses)
-      setActiveWhiteStats(s => ({ ...s, time: u.white_time }));
-      setActiveBlackStats(s => ({ ...s, time: u.black_time }));
+      if (u.result) state.matchResult = `Game Over: ${u.result}`;
 
-      if (u.result) setMatchResult(`Game Over: ${u.result}`);
+      // If this is the selected game, or if no game is selected, update UI
+      if (selectedGameIdRef.current === null || selectedGameIdRef.current === gameId) {
+          if (selectedGameIdRef.current === null) {
+              setSelectedGameId(gameId);
+              selectedGameIdRef.current = gameId;
+          }
+          setFen(state.fen);
+          setMoves([...state.moves]);
+          setLastMove([...state.lastMove]);
+          setWhiteEngineIdx(state.whiteEngineIdx);
+          setBlackEngineIdx(state.blackEngineIdx);
+          setActiveWhiteStats({...state.activeWhiteStats});
+          setActiveBlackStats({...state.activeBlackStats});
+          setMatchResult(state.matchResult);
+          setEvalHistory([...state.evalHistory]);
+      }
     });
 
     const unlistenTime = listen("time-update", (event: any) => {
         const t = event.payload as TimeUpdate;
-        if (selectedGameId !== null && t.game_id !== selectedGameId) return;
-        setActiveWhiteStats(s => ({ ...s, time: t.white_time }));
-        setActiveBlackStats(s => ({ ...s, time: t.black_time }));
+        const gameId = t.game_id;
+        if (!gameStates.current[gameId]) return;
+
+        const state = gameStates.current[gameId];
+        state.activeWhiteStats.time = t.white_time;
+        state.activeBlackStats.time = t.black_time;
+
+        if (selectedGameIdRef.current === gameId) {
+            setActiveWhiteStats(s => ({ ...s, time: t.white_time }));
+            setActiveBlackStats(s => ({ ...s, time: t.black_time }));
+        }
     });
 
     const unlistenStats = listen("engine-stats", (event: any) => {
       const s = event.payload as EngineStatsPayload;
-      if (selectedGameId !== null && s.game_id !== selectedGameId) return;
+      const gameId = s.game_id;
+      if (!gameStates.current[gameId]) return;
+
+      const state = gameStates.current[gameId];
       const update = { depth: s.depth, score: s.score_cp, nodes: s.nodes, nps: s.nps, pv: s.pv };
-      if (whiteEngineIdx === s.engine_idx) setActiveWhiteStats(prev => ({...prev, ...update}));
-      if (blackEngineIdx === s.engine_idx) setActiveBlackStats(prev => ({...prev, ...update}));
+
+      if (state.whiteEngineIdx === s.engine_idx) Object.assign(state.activeWhiteStats, update);
+      if (state.blackEngineIdx === s.engine_idx) Object.assign(state.activeBlackStats, update);
+
+      if (selectedGameIdRef.current === gameId) {
+          if (state.whiteEngineIdx === s.engine_idx) setActiveWhiteStats(prev => ({...prev, ...update}));
+          if (state.blackEngineIdx === s.engine_idx) setActiveBlackStats(prev => ({...prev, ...update}));
+      }
     });
 
     const unlistenTourneyStats = listen("tournament-stats", (event: any) => setTournamentStats(event.payload));
@@ -199,15 +284,7 @@ function App() {
       unlistenTourneyStats.then(f => f());
       unlistenSchedule.then(f => f());
     };
-  }, [engines, selectedGameId, whiteEngineIdx, blackEngineIdx]);
-
-  useEffect(() => {
-    if (moves.length > 0) {
-      setEvalHistory(prev => [...prev, { moveNumber: moves.length, score: activeWhiteStats.score || 0 }]);
-    } else {
-      setEvalHistory([]);
-    }
-  }, [moves, activeWhiteStats.score]);
+  }, []); // Run once!
 
   const clearGameState = () => {
       setMoves([]); setLastMove([]); setMatchResult(null); setEvalHistory([]); setFen("start");
@@ -216,6 +293,10 @@ function App() {
   };
 
   const startMatch = async () => {
+    // Reset global state
+    gameStates.current = {};
+    selectedGameIdRef.current = null;
+
     clearGameState();
     setMatchRunning(true);
     setIsPaused(false);
@@ -271,7 +352,26 @@ function App() {
     if (selected && typeof selected === 'string') setOpeningFile(selected);
   };
 
-  const handleGameSelect = (id: number) => { setSelectedGameId(id); clearGameState(); };
+  const handleGameSelect = (id: number) => {
+      setSelectedGameId(id);
+      selectedGameIdRef.current = id;
+
+      const state = gameStates.current[id];
+      if (state) {
+          setFen(state.fen);
+          setMoves([...state.moves]);
+          setLastMove([...state.lastMove]);
+          setWhiteEngineIdx(state.whiteEngineIdx);
+          setBlackEngineIdx(state.blackEngineIdx);
+          setActiveWhiteStats({...state.activeWhiteStats});
+          setActiveBlackStats({...state.activeBlackStats});
+          setMatchResult(state.matchResult);
+          setEvalHistory([...state.evalHistory]);
+      } else {
+          clearGameState();
+      }
+  };
+
   const copyPgn = async () => {
        let pgn = `[White "${activeWhiteStats.name}"]\n[Black "${activeBlackStats.name}"]\n\n`;
        moves.forEach((m, i) => { if (i % 2 === 0) pgn += `${i/2 + 1}. `; pgn += m + " "; });
