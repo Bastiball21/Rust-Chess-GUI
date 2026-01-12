@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, Emitter, State};
+use tauri::{AppHandle, Emitter, State};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use crate::arbiter::Arbiter;
@@ -16,7 +16,10 @@ struct AppState { current_arbiter: Arc<Mutex<Option<Arc<Arbiter>>>>, }
 
 #[tauri::command]
 async fn start_match(app: AppHandle, state: State<'_, AppState>, config: TournamentConfig) -> Result<(), String> {
-    let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = {
+        let arbiter_lock = state.current_arbiter.lock().map_err(|_| "Failed to lock arbiter state".to_string())?;
+        arbiter_lock.clone()
+    };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     let (game_tx, mut game_rx) = mpsc::channel::<GameUpdate>(100);
     let (stats_tx, mut stats_rx) = mpsc::channel::<EngineStats>(100);
@@ -25,7 +28,10 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, config: Tournam
 
     let arbiter = Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx).await.map_err(|e| e.to_string())?;
     let arbiter = Arc::new(arbiter);
-    { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); *arbiter_lock = Some(arbiter.clone()); }
+    {
+        let mut arbiter_lock = state.current_arbiter.lock().map_err(|_| "Failed to lock arbiter state".to_string())?;
+        *arbiter_lock = Some(arbiter.clone());
+    }
 
     let app_handle = app.clone();
     tokio::spawn(async move { while let Some(update) = game_rx.recv().await { let _ = app_handle.emit("game-update", update); } });
@@ -46,14 +52,22 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, config: Tournam
 
 #[tauri::command]
 async fn stop_match(state: State<'_, AppState>) -> Result<(), String> {
-    let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); let arb = arbiter_lock.clone(); *arbiter_lock = None; arb };
+    let maybe_arbiter = {
+        let mut arbiter_lock = state.current_arbiter.lock().map_err(|_| "Failed to lock arbiter state".to_string())?;
+        let arb = arbiter_lock.clone();
+        *arbiter_lock = None;
+        arb
+    };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     Ok(())
 }
 
 #[tauri::command]
 async fn pause_match(state: State<'_, AppState>, paused: bool) -> Result<(), String> {
-    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = {
+        let arbiter_lock = state.current_arbiter.lock().map_err(|_| "Failed to lock arbiter state".to_string())?;
+        arbiter_lock.clone()
+    };
     if let Some(arbiter) = maybe_arbiter { arbiter.set_paused(paused).await; }
     Ok(())
 }

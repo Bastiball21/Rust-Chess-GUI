@@ -10,6 +10,8 @@ use tokio::sync::Mutex;
 use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
 use std::io::BufRead;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
 
 enum Board {
     Standard(Chess),
@@ -58,7 +60,7 @@ impl Arbiter {
 
         if let Some(order) = &config.opening_order {
             if order == "random" {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 openings.shuffle(&mut rng);
             }
         }
@@ -68,10 +70,9 @@ impl Arbiter {
         let pgn_path = config.pgn_path.clone().unwrap_or_else(|| "tournament.pgn".to_string());
 
         tokio::spawn(async move {
-             use std::io::Write;
              while let Some(pgn) = pgn_rx.recv().await {
-                 if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
-                     let _ = file.write_all(pgn.as_bytes());
+                 if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&pgn_path).await {
+                     let _ = file.write_all(pgn.as_bytes()).await;
                  }
              }
         });
@@ -342,11 +343,11 @@ impl Arbiter {
 
 fn generate_start_fen(variant: &str) -> String {
     if variant == "chess960" {
-        let _pieces = vec![Role::Rook, Role::Knight, Role::Bishop, Role::Queen, Role::King, Role::Bishop, Role::Knight, Role::Rook];
+        let _pieces = [Role::Rook, Role::Knight, Role::Bishop, Role::Queen, Role::King, Role::Bishop, Role::Knight, Role::Rook];
         let mut rng = rand::rng();
-        let mut dark_squares = vec![0, 2, 4, 6]; let mut light_squares = vec![1, 3, 5, 7];
-        let b1_pos = *dark_squares.choose(&mut rng).unwrap();
-        let b2_pos = *light_squares.choose(&mut rng).unwrap();
+        let dark_squares = [0, 2, 4, 6]; let light_squares = [1, 3, 5, 7];
+        let b1_pos = *dark_squares.choose(&mut rng).unwrap_or(&0);
+        let b2_pos = *light_squares.choose(&mut rng).unwrap_or(&1);
         let mut empty: Vec<usize> = (0..8).filter(|&i| i != b1_pos && i != b2_pos).collect();
         empty.shuffle(&mut rng);
         let q_pos = empty[0]; let n1_pos = empty[1]; let n2_pos = empty[2];
@@ -379,14 +380,14 @@ fn format_pgn(moves: &[String], result: &str, white_name: &str, black_name: &str
          pgn.push_str(&format!("[FEN \"{}\"]\n", start_fen));
          pgn.push_str("[SetUp \"1\"]\n");
      }
-     pgn.push_str("\n");
+     pgn.push('\n');
 
      for (i, m) in moves.iter().enumerate() {
          if i % 2 == 0 {
              pgn.push_str(&format!("{}. ", i / 2 + 1));
          }
          pgn.push_str(m);
-         pgn.push_str(" ");
+         pgn.push(' ');
      }
      pgn.push_str(result);
      pgn.push_str("\n\n");
@@ -459,6 +460,7 @@ async fn initialize_engine(engine: &AsyncEngine, config: &crate::types::EngineCo
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn play_game_static(
     white_engine: &AsyncEngine,
     black_engine: &AsyncEngine,
@@ -493,7 +495,9 @@ async fn play_game_static(
 
     let mut consec_resign_moves = 0;
     let mut consec_draw_moves = 0;
-    let mut game_result = "*".to_string();
+    // let mut game_result = "*".to_string(); // Removed as it was unused warning
+
+    let game_result;
 
     loop {
         if *should_stop.lock().await { return Ok(("stopped".to_string(), moves_history)); }
@@ -518,7 +522,7 @@ async fn play_game_static(
         }
 
         if pos.is_game_over() {
-            let outcome = pos.outcome().unwrap();
+            let outcome = pos.outcome().unwrap_or(Outcome::Draw); // Default to draw if unknown (should imply stale-mate/draw if no winner)
             let result_str = match outcome {
                 shakmaty::Outcome::Decisive { winner: Color::White } => "1-0",
                 shakmaty::Outcome::Decisive { winner: Color::Black } => "0-1",
@@ -540,7 +544,7 @@ async fn play_game_static(
         };
 
         let mut pos_cmd = format!("position fen {} moves", start_fen);
-        for m in &moves_history { pos_cmd.push_str(" "); pos_cmd.push_str(m); }
+        for m in &moves_history { pos_cmd.push(' '); pos_cmd.push_str(m); }
         active_engine.send(pos_cmd).await?;
 
         let go_cmd = format!("go wtime {} btime {} winc {} binc {}", white_time, black_time, inc, inc);
@@ -702,21 +706,21 @@ fn load_openings(path: &str) -> Option<Vec<String>> {
     let mut fens = Vec::new();
     let is_pgn = path.ends_with(".pgn");
 
-    for line_res in reader.lines() {
-        if let Ok(line) = line_res {
-            let line = line.trim();
-            if line.is_empty() { continue; }
-            if is_pgn {
-                // Simple PGN FEN extraction
-                if line.starts_with("[FEN \"") && line.ends_with("\"]") {
-                    let fen = &line[6..line.len()-2];
-                    fens.push(fen.to_string());
-                }
-            } else {
-                // Assume EPD: take everything before first " ;" or just the whole line if clean
-                let parts: Vec<&str> = line.split(';').collect();
-                fens.push(parts[0].trim().to_string());
+    for line in reader.lines().map_while(Result::ok) {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if is_pgn {
+            // Simple PGN FEN extraction
+            if line.starts_with("[FEN \"") && line.ends_with("\"]") {
+                let fen = &line[6..line.len()-2];
+                fens.push(fen.to_string());
             }
+        } else {
+            // Assume EPD: take everything before first " ;" or just the whole line if clean
+            let parts: Vec<&str> = line.split(';').collect();
+            fens.push(parts[0].trim().to_string());
         }
     }
     if fens.is_empty() { None } else { Some(fens) }

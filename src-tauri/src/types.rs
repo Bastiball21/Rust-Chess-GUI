@@ -7,7 +7,7 @@ pub struct EngineConfig {
     pub path: String,
     pub options: Vec<(String, String)>,
     pub country_code: Option<String>,
-    pub args: Option<Vec<String>>, // Added for Cutechess compat
+    pub args: Option<Vec<String>>,         // Added for Cutechess compat
     pub working_directory: Option<String>, // Added for Cutechess compat
 }
 
@@ -30,17 +30,26 @@ pub struct TournamentConfig {
     pub opening_order: Option<String>,
     pub variant: String,
     pub concurrency: Option<u32>,
-    pub pgn_path: Option<String>, // Added for PGN saving
+    pub pgn_path: Option<String>,   // Added for PGN saving
     pub event_name: Option<String>, // Added for PGN header
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TimeControl { pub base_ms: u64, pub inc_ms: u64 }
+pub struct TimeControl {
+    pub base_ms: u64,
+    pub inc_ms: u64,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GameUpdate {
-    pub fen: String, pub last_move: Option<String>, pub white_time: u64, pub black_time: u64,
-    pub move_number: u32, pub result: Option<String>, pub white_engine_idx: usize, pub black_engine_idx: usize,
+    pub fen: String,
+    pub last_move: Option<String>,
+    pub white_time: u64,
+    pub black_time: u64,
+    pub move_number: u32,
+    pub result: Option<String>,
+    pub white_engine_idx: usize,
+    pub black_engine_idx: usize,
     pub game_id: usize,
 }
 
@@ -54,8 +63,13 @@ pub struct TimeUpdate {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EngineStats {
-    pub depth: u32, pub score_cp: Option<i32>, pub score_mate: Option<i32>,
-    pub nodes: u64, pub nps: u64, pub pv: String, pub engine_idx: usize,
+    pub depth: u32,
+    pub score_cp: Option<i32>,
+    pub score_mate: Option<i32>,
+    pub nodes: u64,
+    pub nps: u64,
+    pub pv: String,
+    pub engine_idx: usize,
     pub game_id: usize,
 }
 
