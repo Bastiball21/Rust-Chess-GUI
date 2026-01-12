@@ -15,8 +15,20 @@ impl TournamentStats {
     pub fn update(&mut self, result: &str, is_white_engine_a: bool) {
         // Result string is "1-0", "0-1", "1/2-1/2"
         match result {
-            "1-0" => if is_white_engine_a { self.wins += 1; } else { self.losses += 1; },
-            "0-1" => if is_white_engine_a { self.losses += 1; } else { self.wins += 1; },
+            "1-0" => {
+                if is_white_engine_a {
+                    self.wins += 1;
+                } else {
+                    self.losses += 1;
+                }
+            }
+            "0-1" => {
+                if is_white_engine_a {
+                    self.losses += 1;
+                } else {
+                    self.wins += 1;
+                }
+            }
             "1/2-1/2" => self.draws += 1,
             _ => {}
         }
@@ -25,7 +37,9 @@ impl TournamentStats {
     }
 
     fn calculate_elo(&mut self) {
-        if self.total_games == 0 { return; }
+        if self.total_games == 0 {
+            return;
+        }
 
         // Simplified ELO difference calculation based on percentage score
         // Formula: E = 1 / (1 + 10^(-diff/400))
@@ -37,8 +51,12 @@ impl TournamentStats {
 
         if p <= 0.0 || p >= 1.0 {
             // Can't calc exact ELO if 0% or 100% score
-            if p <= 0.0 { self.elo_diff = -1000.0; } // Arbitrary large negative
-            if p >= 1.0 { self.elo_diff = 1000.0; } // Arbitrary large positive
+            if p <= 0.0 {
+                self.elo_diff = -1000.0;
+            } // Arbitrary large negative
+            if p >= 1.0 {
+                self.elo_diff = 1000.0;
+            } // Arbitrary large positive
         } else {
             self.elo_diff = -400.0 * (1.0 / p - 1.0).log10();
         }
@@ -63,6 +81,9 @@ impl TournamentStats {
 
         // The user asked for: "Engine A is +15 ELO (± 10) with 95% confidence."
         // We'll set sprt_status to a formatted string.
-        self.sprt_status = format!("Elo: {:.1} +/- {:.1} (95%)", self.elo_diff, self.error_margin);
+        self.sprt_status = format!(
+            "Elo: {:.1} +/- {:.1} (95%)",
+            self.elo_diff, self.error_margin
+        );
     }
 }

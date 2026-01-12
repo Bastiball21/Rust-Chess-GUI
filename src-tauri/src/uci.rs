@@ -1,10 +1,10 @@
+use anyhow::{Context, Result};
 use std::process::Stdio;
-use tokio::process::Command;
-use tokio::io::{BufReader, AsyncBufReadExt, AsyncWriteExt, BufWriter};
-use tokio::sync::mpsc;
-use tokio::sync::broadcast;
-use anyhow::{Result, Context};
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::process::Command;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
@@ -27,8 +27,8 @@ impl AsyncEngine {
     pub async fn spawn(path: &str) -> Result<Self> {
         let mut cmd = Command::new(path);
         cmd.stdin(Stdio::piped())
-           .stdout(Stdio::piped())
-           .stderr(Stdio::null());
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
 
         #[cfg(windows)]
         {
@@ -39,7 +39,9 @@ impl AsyncEngine {
 
         cmd.kill_on_drop(true);
 
-        let mut child = cmd.spawn().context(format!("Failed to spawn engine at {}", path))?;
+        let mut child = cmd
+            .spawn()
+            .context(format!("Failed to spawn engine at {}", path))?;
 
         let stdin = child.stdin.take().context("Failed to open stdin")?;
         let stdout = child.stdout.take().context("Failed to open stdout")?;
@@ -70,9 +72,7 @@ impl AsyncEngine {
                         if let Some(cmd) = cmd_opt {
                              // Write to engine
                              if writer.write_all(cmd.as_bytes()).await.is_err() { break; }
-                             if !cmd.ends_with('\n') {
-                                 if writer.write_all(b"\n").await.is_err() { break; }
-                             }
+                             if !cmd.ends_with('\n') && writer.write_all(b"\n").await.is_err() { break; }
                              if writer.flush().await.is_err() { break; }
                         } else {
                             // Channel closed
@@ -107,7 +107,7 @@ impl AsyncEngine {
             stdin_tx,
             kill_tx,
             stdout_broadcast: stdout_tx,
-            is_alive
+            is_alive,
         })
     }
 
@@ -119,7 +119,8 @@ impl AsyncEngine {
     }
 
     pub async fn set_option(&self, name: &str, value: &str) -> Result<()> {
-        self.send(format!("setoption name {} value {}", name, value)).await
+        self.send(format!("setoption name {} value {}", name, value))
+            .await
     }
 
     pub async fn quit(&self) -> Result<()> {
