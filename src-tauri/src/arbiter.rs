@@ -188,6 +188,7 @@ impl Arbiter {
 
         let mut queue = self.schedule_queue.lock().await;
         let mut pairing_states = self.pairing_states.lock().await;
+        let mut next_game_id = self.next_game_id.lock().await;
 
         let mut pending_counts: HashMap<(usize, usize), usize> = HashMap::new();
         for item in queue.iter() {
@@ -233,11 +234,8 @@ impl Arbiter {
             if current < remaining_rounds as usize {
                 let add_count = remaining_rounds as usize - current;
                 for _ in 0..add_count {
-                    let game_id = {
-                        let mut id = self.next_game_id.lock().await;
-                        *id += 1;
-                        *id
-                    };
+                    *next_game_id += 1;
+                    let game_id = *next_game_id;
                     let game_idx = state.next_game_idx;
                     state.next_game_idx += 1;
                     let item = self.make_schedule_item(state.idx_a, state.idx_b, game_idx, game_id);
