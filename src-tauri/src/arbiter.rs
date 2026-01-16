@@ -1045,6 +1045,17 @@ async fn play_game_static(
     let mut consec_resign_moves = 0;
     let mut consec_draw_moves = 0;
     let mut game_result = "*".to_string();
+    let mut repetition_counts: HashMap<String, u32> = HashMap::new();
+    let mut halfmove_clock: u32 = start_fen
+        .split_whitespace()
+        .nth(4)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+
+    let repetition_key = |fen: &str| -> String {
+        fen.split_whitespace().take(4).collect::<Vec<_>>().join(" ")
+    };
+    repetition_counts.insert(repetition_key(&pos.to_fen_string()), 1);
 
     loop {
         if *should_stop.lock().await {
@@ -1225,6 +1236,26 @@ async fn play_game_static(
         if let Ok(m) = parsed_move {
             pos.play_unchecked(&m);
             moves_history.push(best_move_str.clone());
+            if m.is_zeroing() {
+                halfmove_clock = 0;
+            } else {
+                halfmove_clock = halfmove_clock.saturating_add(1);
+            }
+
+            let repetition_count = repetition_counts
+                .entry(repetition_key(&pos.to_fen_string()))
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+
+            if *repetition_count >= 3 || halfmove_clock >= 100 {
+                game_result = "1/2-1/2".to_string();
+                let _ = game_update_tx.send(GameUpdate {
+                    fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
+                    move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                    game_id
+                }).await;
+                break;
+            }
         } else {
              println!("Illegal/Unparseable move from {}: {}", if turn == Color::White { "White" } else { "Black" }, best_move_str);
              // Forfeit the engine that made the illegal move
