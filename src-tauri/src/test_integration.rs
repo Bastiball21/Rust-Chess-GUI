@@ -20,6 +20,24 @@ mod tests {
         let config = TournamentConfig {
             mode: TournamentMode::Match,
             engines: vec![
+                EngineConfig {
+                    id: None,
+                    name: "MockWhite".into(),
+                    path: path_str.clone(),
+                    options: vec![],
+                    country_code: None,
+                    args: None,
+                    working_directory: None,
+                },
+                EngineConfig {
+                    id: None,
+                    name: "MockBlack".into(),
+                    path: path_str,
+                    options: vec![],
+                    country_code: None,
+                    args: None,
+                    working_directory: None,
+                },
                 EngineConfig { id: None, name: "MockWhite".into(), path: path_str.clone(), options: vec![], country_code: None, args: None, working_directory: None },
                 EngineConfig { id: None, name: "MockBlack".into(), path: path_str, options: vec![], country_code: None, args: None, working_directory: None },
             ],
@@ -33,6 +51,7 @@ mod tests {
             concurrency: Some(1),
             pgn_path: None,
             event_name: None,
+            disabled_engine_ids: Vec::new(),
             resume_state_path: None,
             resume_from_state: false,
         };

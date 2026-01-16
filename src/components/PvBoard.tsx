@@ -14,13 +14,17 @@ export const PvBoard: React.FC<PvBoardProps> = ({ pv, currentFen, side }) => {
         if (!pv || !currentFen) return currentFen || "start";
         try {
             const game = new Chess(currentFen === "start" ? undefined : currentFen);
-            const moves = pv.split(" ");
+            const moves = pv.split(/\s+/).filter(Boolean);
             for (const move of moves) {
-                // Parse UCI (e2e4) to chess.js object
+                if (move === "0000") continue;
+                if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)) {
+                    break;
+                }
                 const from = move.slice(0, 2);
                 const to = move.slice(2, 4);
                 const promotion = move.length > 4 ? move.slice(4) : undefined;
-                game.move({ from, to, promotion });
+                const applied = game.move({ from, to, promotion });
+                if (!applied) break;
             }
             return game.fen();
         } catch (e) {
