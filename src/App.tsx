@@ -213,17 +213,20 @@ function App() {
     checkSavedTournament();
   }, []);
 
+  const resolveDefaultPgnPath = async () => {
+    try {
+      const appDir = await appDataDir();
+      const defaultPath = await join(appDir, "tournament.pgn");
+      setDefaultPgnPath(defaultPath);
+      return defaultPath;
+    } catch (err) {
+      console.warn("Failed to resolve default PGN path", err);
+      return null;
+    }
+  };
+
   useEffect(() => {
-    const loadDefaultPgnPath = async () => {
-      try {
-        const appDir = await appDataDir();
-        const defaultPath = await join(appDir, "tournament.pgn");
-        setDefaultPgnPath(defaultPath);
-      } catch (err) {
-        console.warn("Failed to resolve default PGN path", err);
-      }
-    };
-    loadDefaultPgnPath();
+    resolveDefaultPgnPath();
   }, []);
 
   useEffect(() => {
@@ -362,7 +365,8 @@ function App() {
 
     // PGN path handling
     const appDir = await appDataDir();
-    const pgnPath = defaultPgnPath ?? await join(appDir, "tournament.pgn");
+    const resolvedDefaultPgnPath = defaultPgnPath ?? await resolveDefaultPgnPath();
+    const pgnPath = resolvedDefaultPgnPath ?? await join(appDir, "tournament.pgn");
     const resumeStatePath = await join(appDir, "tournament_resume.json");
 
     const config: TournamentConfig = {
