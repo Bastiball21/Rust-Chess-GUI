@@ -166,6 +166,7 @@ function App() {
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [savedTournament, setSavedTournament] = useState<TournamentResumeState | null>(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [defaultPgnPath, setDefaultPgnPath] = useState<string | null>(null);
 
   const selectedGameIdRef = useRef<number | null>(null);
   const gameStates = useRef<Record<number, GameStateData>>({});
@@ -210,6 +211,19 @@ function App() {
       }
     };
     checkSavedTournament();
+  }, []);
+
+  useEffect(() => {
+    const loadDefaultPgnPath = async () => {
+      try {
+        const appDir = await appDataDir();
+        const defaultPath = await join(appDir, "tournament.pgn");
+        setDefaultPgnPath(defaultPath);
+      } catch (err) {
+        console.warn("Failed to resolve default PGN path", err);
+      }
+    };
+    loadDefaultPgnPath();
   }, []);
 
   useEffect(() => {
@@ -348,7 +362,7 @@ function App() {
 
     // PGN path handling
     const appDir = await appDataDir();
-    const pgnPath = await join(appDir, "tournament.pgn");
+    const pgnPath = defaultPgnPath ?? await join(appDir, "tournament.pgn");
     const resumeStatePath = await join(appDir, "tournament_resume.json");
 
     const config: TournamentConfig = {
