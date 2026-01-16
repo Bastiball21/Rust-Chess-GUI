@@ -1,10 +1,12 @@
 use tauri::{AppHandle, Manager, Emitter, State};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use crate::arbiter::Arbiter;
 use crate::types::{TournamentConfig, GameUpdate, EngineStats, ScheduledGame, TournamentError, TournamentResumeState};
 use crate::stats::TournamentStats;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 pub mod arbiter;
 pub mod uci;
@@ -24,6 +26,20 @@ fn resume_state_path(app: &AppHandle) -> Result<PathBuf, String> {
 async fn start_match(app: AppHandle, state: State<'_, AppState>, mut config: TournamentConfig) -> Result<(), String> {
     let trimmed_path = config.pgn_path.as_deref().map(str::trim).filter(|path| !path.is_empty());
     config.pgn_path = Some(trimmed_path.unwrap_or("tournament.pgn").to_string());
+    for engine in &config.engines {
+        let engine_path = Path::new(&engine.path);
+        if !engine_path.exists() {
+            return Err("Cannot start: engine path missing or not executable".to_string());
+        }
+        #[cfg(unix)]
+        {
+            let metadata = std::fs::metadata(engine_path)
+                .map_err(|_| "Cannot start: engine path missing or not executable".to_string())?;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return Err("Cannot start: engine path missing or not executable".to_string());
+            }
+        }
+    }
     let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     let (game_tx, mut game_rx) = mpsc::channel::<GameUpdate>(100);
