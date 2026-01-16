@@ -68,6 +68,28 @@ interface ScheduledGame {
   result: string | null;
 }
 
+interface TournamentConfig {
+  mode: "Match" | "RoundRobin" | "Gauntlet";
+  engines: EngineConfig[];
+  time_control: { base_ms: number; inc_ms: number };
+  games_count: number;
+  swap_sides: boolean;
+  opening_fen?: string | null;
+  opening_file?: string | null;
+  opening_order?: string | null;
+  variant: string;
+  concurrency?: number | null;
+  pgn_path?: string | null;
+  event_name?: string | null;
+  resume_state_path?: string | null;
+  resume_from_state?: boolean;
+}
+
+interface TournamentResumeState {
+  config: TournamentConfig;
+  schedule: ScheduledGame[];
+}
+
 interface GameStateData {
     fen: string;
     moves: string[];
@@ -147,6 +169,9 @@ function App() {
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [savedTournament, setSavedTournament] = useState<TournamentResumeState | null>(null);
+  const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [defaultPgnPath, setDefaultPgnPath] = useState<string | null>(null);
 
   const selectedGameIdRef = useRef<number | null>(null);
   const gameStates = useRef<Record<number, GameStateData>>({});
@@ -197,12 +222,34 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const loadDefaultPgnPath = async () => {
+    const checkSavedTournament = async () => {
+      try {
+        const saved = await invoke<TournamentResumeState | null>("get_saved_tournament");
+        if (saved) {
+          setSavedTournament(saved);
+          setShowResumePrompt(true);
+        }
+      } catch (err) {
+        console.warn("Failed to load saved tournament", err);
+      }
+    };
+    checkSavedTournament();
+  }, []);
+
+  const resolveDefaultPgnPath = async () => {
+    try {
       const appDir = await appDataDir();
       const defaultPath = await join(appDir, "tournament.pgn");
       setDefaultPgnPath(defaultPath);
-    };
-    loadDefaultPgnPath();
+      return defaultPath;
+    } catch (err) {
+      console.warn("Failed to resolve default PGN path", err);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    resolveDefaultPgnPath();
   }, []);
 
   useEffect(() => {
@@ -304,6 +351,32 @@ function App() {
       setActiveWhiteStats(s => ({...s, score: 0, pv: ""})); setActiveBlackStats(s => ({...s, score: 0, pv: ""}));
   };
 
+  const applyTournamentConfig = (config: TournamentConfig) => {
+    setTournamentMode(config.mode);
+    setEngines(config.engines);
+    setGamesCount(config.games_count);
+    setConcurrency(config.concurrency ?? 4);
+    setSwapSides(config.swap_sides);
+    setVariant(config.variant);
+    setEventName(config.event_name ?? "CCRL GUI Tournament");
+    const baseMs = config.time_control.base_ms;
+    const incMs = config.time_control.inc_ms;
+    const baseTotalSeconds = Math.floor(baseMs / 1000);
+    const incTotalSeconds = Math.floor(incMs / 1000);
+    setBaseH(Math.floor(baseTotalSeconds / 3600));
+    setBaseM(Math.floor((baseTotalSeconds % 3600) / 60));
+    setBaseS(baseTotalSeconds % 60);
+    setIncH(Math.floor(incTotalSeconds / 3600));
+    setIncM(Math.floor((incTotalSeconds % 3600) / 60));
+    setIncS(incTotalSeconds % 60);
+    const openingFenValue = config.opening_fen ?? "";
+    const openingFileValue = config.opening_file ?? "";
+    setOpeningFen(openingFenValue);
+    setOpeningFile(openingFileValue);
+    const nextOpeningMode = openingFenValue ? "fen" : (openingFileValue ? "file" : "fen");
+    setOpeningMode(nextOpeningMode);
+  };
+
   const startMatch = async () => {
     gameStates.current = {};
     selectedGameIdRef.current = null;
@@ -319,22 +392,47 @@ function App() {
     const baseMs = Math.round((baseH * 3600 + baseM * 60 + baseS) * 1000);
     const incMs = Math.round((incH * 3600 + incM * 60 + incS) * 1000);
 
-    const trimmedPgnPath = pgnPath.trim();
-    const resolvedPath = trimmedPgnPath || defaultPgnPath || await join(await appDataDir(), "tournament.pgn");
-    setResolvedPgnPath(resolvedPath);
+    // PGN path handling
+    const appDir = await appDataDir();
+    const resolvedDefaultPgnPath = defaultPgnPath ?? await resolveDefaultPgnPath();
+    const pgnPath = resolvedDefaultPgnPath ?? await join(appDir, "tournament.pgn");
+    const resumeStatePath = await join(appDir, "tournament_resume.json");
 
-    const config = {
+    const config: TournamentConfig = {
       mode: tournamentMode, engines: engines, time_control: { base_ms: baseMs, inc_ms: incMs },
       games_count: gamesCount, concurrency: concurrency, swap_sides: swapSides,
       opening_fen: (openingMode === 'fen' && openingFen) ? openingFen : null,
       opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
       opening_order: (openingMode === 'file' && openingFile) ? openingOrder : null,
       variant: variant,
-      pgn_path: trimmedPgnPath || null,
-      event_name: eventName
+      pgn_path: pgnPath,
+      event_name: eventName,
+      resume_state_path: resumeStatePath,
+      resume_from_state: false
     };
     await invoke("start_match", { config });
     setActiveTab('schedule');
+  };
+
+  const resumeMatch = async () => {
+    if (!savedTournament) return;
+    gameStates.current = {};
+    selectedGameIdRef.current = null;
+    clearGameState();
+    applyTournamentConfig(savedTournament.config);
+    setSchedule(savedTournament.schedule);
+    setMatchRunning(true);
+    setIsPaused(false);
+    setSelectedGameId(null);
+    setShowResumePrompt(false);
+    await invoke("resume_match");
+    setActiveTab('schedule');
+  };
+
+  const discardSavedTournament = async () => {
+    await invoke("discard_saved_tournament");
+    setSavedTournament(null);
+    setShowResumePrompt(false);
   };
 
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
@@ -463,6 +561,18 @@ function App() {
 
   return (
     <div className="h-screen w-screen bg-gray-900 text-white flex overflow-hidden text-lg">
+      {showResumePrompt && savedTournament && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="bg-gray-800 p-6 rounded-lg w-96 border border-gray-600 shadow-2xl">
+            <h2 className="text-xl font-bold mb-2 text-blue-300">Resume Tournament?</h2>
+            <p className="text-sm text-gray-300 mb-4">An in-progress tournament was found. Would you like to resume or discard it?</p>
+            <div className="flex gap-2">
+              <button className="flex-1 bg-green-600 px-4 py-2 rounded font-bold hover:bg-green-500" onClick={resumeMatch}>Resume</button>
+              <button className="flex-1 bg-red-600 px-4 py-2 rounded font-bold hover:bg-red-500" onClick={discardSavedTournament}>Discard</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Engine Manager Modal */}
       {showEngineManager && (
           <EngineManager

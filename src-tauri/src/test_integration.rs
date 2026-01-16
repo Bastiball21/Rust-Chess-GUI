@@ -20,8 +20,8 @@ mod tests {
         let config = TournamentConfig {
             mode: TournamentMode::Match,
             engines: vec![
-                EngineConfig { name: "MockWhite".into(), path: path_str.clone(), options: vec![] },
-                EngineConfig { name: "MockBlack".into(), path: path_str, options: vec![] },
+                EngineConfig { id: None, name: "MockWhite".into(), path: path_str.clone(), options: vec![], country_code: None, args: None, working_directory: None },
+                EngineConfig { id: None, name: "MockBlack".into(), path: path_str, options: vec![], country_code: None, args: None, working_directory: None },
             ],
             time_control: TimeControl { base_ms: 1000, inc_ms: 100 },
             games_count: 2,
@@ -31,6 +31,10 @@ mod tests {
             opening_order: None,
             variant: "standard".to_string(),
             concurrency: Some(1),
+            pgn_path: None,
+            event_name: None,
+            resume_state_path: None,
+            resume_from_state: false,
         };
 
         let (game_tx, mut game_rx) = mpsc::channel(100);
