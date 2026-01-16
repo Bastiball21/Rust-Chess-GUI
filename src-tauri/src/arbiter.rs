@@ -1,5 +1,5 @@
 use crate::uci::AsyncEngine;
-use crate::types::{TournamentConfig, TournamentMode, GameUpdate, EngineStats, ScheduledGame};
+use crate::types::{TournamentConfig, TournamentMode, GameUpdate, EngineStats, ScheduledGame, TournamentResumeState};
 use crate::stats::TournamentStats;
 use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode, Outcome};
 use shakmaty::fen::Fen;
@@ -11,6 +11,7 @@ use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
 use std::io::BufRead;
 use std::collections::HashSet;
+use std::path::Path;
 
 enum Board {
     Standard(Chess),
@@ -43,6 +44,7 @@ pub struct Arbiter {
     openings: Vec<String>,
     tourney_stats: Arc<Mutex<TournamentStats>>,
     disabled_engine_ids: Arc<Mutex<HashSet<String>>>,
+    schedule_state: Arc<Mutex<Vec<ScheduledGame>>>,
 }
 
 impl Arbiter {
@@ -93,6 +95,7 @@ impl Arbiter {
             openings,
             tourney_stats: Arc::new(Mutex::new(TournamentStats::default())),
             disabled_engine_ids: Arc::new(Mutex::new(disabled_engine_ids)),
+            schedule_state: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -101,6 +104,31 @@ impl Arbiter {
     pub async fn set_disabled_engine_ids(&self, disabled_engine_ids: Vec<String>) {
         let mut disabled_ids = self.disabled_engine_ids.lock().await;
         *disabled_ids = disabled_engine_ids.into_iter().collect();
+    pub async fn load_schedule_state(&self, schedule: Vec<ScheduledGame>) {
+        *self.schedule_state.lock().await = schedule;
+    }
+
+    async fn persist_tournament_state(&self) -> anyhow::Result<()> {
+        let path = match self.config.resume_state_path.as_ref() {
+            Some(path) => path.clone(),
+            None => return Ok(()),
+        };
+        let schedule = { self.schedule_state.lock().await.clone() };
+        let mut config = self.config.clone();
+        config.resume_from_state = false;
+        let state = TournamentResumeState { config, schedule };
+        let json = serde_json::to_string_pretty(&state)?;
+        let tmp_path = format!("{}.tmp", path);
+        std::fs::write(&tmp_path, json)?;
+        std::fs::rename(tmp_path, path)?;
+        Ok(())
+    }
+
+    pub fn remove_resume_state_file(path: &str) -> anyhow::Result<()> {
+        if Path::new(path).exists() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
     }
 
     fn generate_pairings(&self) -> Vec<(usize, usize)> {
@@ -138,38 +166,59 @@ impl Arbiter {
         let mut schedule_list = Vec::new();
 
         let mut game_id_counter = 0;
-        for (idx_a, idx_b) in pairings {
-            for i in 0..games_count {
-                // Determine names for schedule
-                let (white_idx, black_idx) = if self.config.swap_sides && i % 2 != 0 {
-                    (idx_b, idx_a)
-                } else {
-                    (idx_a, idx_b)
+        if self.config.resume_from_state {
+            let schedule = self.schedule_state.lock().await.clone();
+            schedule_list = schedule;
+            for scheduled_game in &schedule_list {
+                let _ = self.schedule_update_tx.send(scheduled_game.clone()).await;
+            }
+            for scheduled_game in &schedule_list {
+                let game_id = scheduled_game.id;
+                let (idx_a, idx_b, game_idx) = match compute_game_mapping(&pairings, games_count, game_id) {
+                    Some(mapping) => mapping,
+                    None => continue,
                 };
-                let white_name = self.config.engines[white_idx].name.clone();
-                let black_name = self.config.engines[black_idx].name.clone();
+                game_id_counter = game_id_counter.max(game_id);
+                if scheduled_game.state == "Finished" || scheduled_game.state == "Aborted" {
+                    continue;
+                }
+                game_tasks.push((idx_a, idx_b, game_idx, game_id));
+            }
+        } else {
+            for (idx_a, idx_b) in pairings {
+                for i in 0..games_count {
+                    // Determine names for schedule
+                    let (white_idx, black_idx) = if self.config.swap_sides && i % 2 != 0 {
+                        (idx_b, idx_a)
+                    } else {
+                        (idx_a, idx_b)
+                    };
+                    let white_name = self.config.engines[white_idx].name.clone();
+                    let black_name = self.config.engines[black_idx].name.clone();
 
-                game_id_counter += 1;
-                let scheduled_game = ScheduledGame {
-                    id: game_id_counter,
-                    white_name: white_name.clone(),
-                    black_name: black_name.clone(),
-                    state: "Pending".to_string(),
-                    result: None,
-                };
-                schedule_list.push(scheduled_game.clone());
+                    game_id_counter += 1;
+                    let scheduled_game = ScheduledGame {
+                        id: game_id_counter,
+                        white_name: white_name.clone(),
+                        black_name: black_name.clone(),
+                        state: "Pending".to_string(),
+                        result: None,
+                    };
+                    schedule_list.push(scheduled_game.clone());
 
-                // Send initial pending state
-                let _ = self.schedule_update_tx.send(scheduled_game).await;
+                    // Send initial pending state
+                    let _ = self.schedule_update_tx.send(scheduled_game).await;
 
-                game_tasks.push((idx_a, idx_b, i, game_id_counter));
+                    game_tasks.push((idx_a, idx_b, i, game_id_counter));
+                }
             }
         }
 
-        // We could send the full list as a "batch" here, but for simplicity we rely on individual "Pending" events
-        // sent above. The frontend can accumulate them.
-        // Actually, individual events might arrive out of order or be slow.
-        // It's better if the frontend clears schedule on start.
+        {
+            let mut schedule_state = self.schedule_state.lock().await;
+            *schedule_state = schedule_list.clone();
+        }
+        self.persist_tournament_state().await?;
 
         for (idx_a, idx_b, game_idx, game_id) in game_tasks {
              if *self.should_stop.lock().await { break; }
@@ -218,8 +267,10 @@ impl Arbiter {
              let tourney_stats = self.tourney_stats.clone();
              let pgn_tx = self.pgn_tx.clone();
              let schedule_update_tx = self.schedule_update_tx.clone();
+             let schedule_state = self.schedule_state.clone();
              let openings = self.openings.clone();
              let disabled_engine_ids = self.disabled_engine_ids.clone();
+             let resume_state_path = self.config.resume_state_path.clone();
 
              let task = tokio::spawn(async move {
                 let _permit = permit;
@@ -261,13 +312,15 @@ impl Arbiter {
                 let black_name = config.engines[black_engine_idx].name.clone();
 
                 // Notify Active
-                let _ = schedule_update_tx.send(ScheduledGame {
+                let active_update = ScheduledGame {
                     id: game_id,
                     white_name: white_name.clone(),
                     black_name: black_name.clone(),
                     state: "Active".to_string(),
                     result: None
-                }).await;
+                };
+                update_schedule_state(&schedule_state, active_update.clone()).await;
+                let _ = schedule_update_tx.send(active_update).await;
 
                 let eng_a_config = &config.engines[idx_a];
                 let eng_b_config = &config.engines[idx_b];
@@ -344,13 +397,18 @@ impl Arbiter {
                 match res {
                     Ok((result, moves_played)) => {
                         // Notify Finished
-                        let _ = schedule_update_tx.send(ScheduledGame {
+                        let finished_update = ScheduledGame {
                             id: game_id,
                             white_name: white_name.clone(),
                             black_name: black_name.clone(),
                             state: "Finished".to_string(),
                             result: Some(result.clone())
-                        }).await;
+                        };
+                        update_schedule_state(&schedule_state, finished_update.clone()).await;
+                        let _ = schedule_update_tx.send(finished_update).await;
+                        if let Err(err) = persist_resume_state(&resume_state_path, &schedule_state, &config).await {
+                            println!("Failed to persist schedule state: {}", err);
+                        }
 
                         let white_name_pgn = &config.engines[white_idx].name;
                         let black_name_pgn = &config.engines[black_idx].name;
@@ -369,13 +427,18 @@ impl Arbiter {
                         if err.to_string() != "stopped" {
                             println!("Game {} failed: {}", game_id, err);
                         }
-                        let _ = schedule_update_tx.send(ScheduledGame {
+                        let aborted_update = ScheduledGame {
                             id: game_id,
                             white_name: white_name.clone(),
                             black_name: black_name.clone(),
                             state: "Aborted".to_string(),
                             result: None
-                        }).await;
+                        };
+                        update_schedule_state(&schedule_state, aborted_update.clone()).await;
+                        let _ = schedule_update_tx.send(aborted_update).await;
+                        if let Err(err) = persist_resume_state(&resume_state_path, &schedule_state, &config).await {
+                            println!("Failed to persist schedule state: {}", err);
+                        }
                     }
                 }
 
@@ -393,6 +456,14 @@ impl Arbiter {
         {
             let mut active = self.active_engines.lock().await;
             active.clear();
+        }
+
+        if let Some(path) = self.config.resume_state_path.as_ref() {
+            let schedule = self.schedule_state.lock().await;
+            let all_done = schedule.iter().all(|game| game.state == "Finished" || game.state == "Aborted");
+            if all_done {
+                let _ = Self::remove_resume_state_file(path);
+            }
         }
 
         Ok(())
@@ -478,6 +549,51 @@ fn format_pgn(moves: &[String], result: &str, white_name: &str, black_name: &str
      pgn.push_str(result);
      pgn.push_str("\n\n");
      pgn
+}
+
+async fn update_schedule_state(schedule_state: &Arc<Mutex<Vec<ScheduledGame>>>, update: ScheduledGame) {
+    let mut schedule = schedule_state.lock().await;
+    if let Some(slot) = schedule.iter_mut().find(|game| game.id == update.id) {
+        *slot = update;
+    } else {
+        schedule.push(update);
+    }
+}
+
+async fn persist_resume_state(
+    resume_state_path: &Option<String>,
+    schedule_state: &Arc<Mutex<Vec<ScheduledGame>>>,
+    config: &TournamentConfig,
+) -> anyhow::Result<()> {
+    let path = match resume_state_path.as_ref() {
+        Some(path) => path.clone(),
+        None => return Ok(()),
+    };
+    let schedule = schedule_state.lock().await.clone();
+    let mut config = config.clone();
+    config.resume_from_state = false;
+    let state = TournamentResumeState { config, schedule };
+    let json = serde_json::to_string_pretty(&state)?;
+    let tmp_path = format!("{}.tmp", path);
+    std::fs::write(&tmp_path, json)?;
+    std::fs::rename(tmp_path, path)?;
+    Ok(())
+}
+
+fn compute_game_mapping(
+    pairings: &[(usize, usize)],
+    games_count: u32,
+    game_id: usize,
+) -> Option<(usize, usize, u32)> {
+    let games_per_pairing = games_count as usize;
+    if games_per_pairing == 0 {
+        return None;
+    }
+    let index = game_id.checked_sub(1)?;
+    let pairing_index = index / games_per_pairing;
+    let game_index = index % games_per_pairing;
+    let (idx_a, idx_b) = *pairings.get(pairing_index)?;
+    Some((idx_a, idx_b, game_index as u32))
 }
 
 async fn initialize_engine(engine: &AsyncEngine, config: &crate::types::EngineConfig, variant: &str) -> anyhow::Result<()> {
