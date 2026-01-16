@@ -669,6 +669,9 @@ function App() {
        alert("PGN copied to clipboard!");
   };
 
+  const presetFeatureAvailable = false;
+  const presetFeatureTooltip = "Preset import/export is not yet available.";
+
   const savePreset = async () => {
       return;
   };
@@ -782,17 +785,19 @@ function App() {
                     {/* Presets & DB */}
                     <div className="flex gap-2 mb-2">
                          <button
-                             onClick={savePreset}
-                             disabled
-                             title="Preset export is not yet available."
+                             onClick={presetFeatureAvailable ? savePreset : undefined}
+                             disabled={!presetFeatureAvailable}
+                             title={!presetFeatureAvailable ? presetFeatureTooltip : undefined}
+                             aria-disabled={!presetFeatureAvailable}
                              className="flex-1 bg-gray-700/70 p-2 rounded text-xs flex items-center justify-center gap-1 cursor-not-allowed text-gray-400"
                          >
                              <Save size={14}/> Save Preset
                          </button>
                          <button
-                             onClick={loadPreset}
-                             disabled
-                             title="Preset import is not yet available."
+                             onClick={presetFeatureAvailable ? loadPreset : undefined}
+                             disabled={!presetFeatureAvailable}
+                             title={!presetFeatureAvailable ? presetFeatureTooltip : undefined}
+                             aria-disabled={!presetFeatureAvailable}
                              className="flex-1 bg-gray-700/70 p-2 rounded text-xs flex items-center justify-center gap-1 cursor-not-allowed text-gray-400"
                          >
                              <FolderOpen size={14}/> Load Preset
