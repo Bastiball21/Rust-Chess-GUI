@@ -32,6 +32,7 @@ pub struct TournamentConfig {
     pub concurrency: Option<u32>,
     pub pgn_path: Option<String>, // Added for PGN saving
     pub event_name: Option<String>, // Added for PGN header
+    pub disabled_engine_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

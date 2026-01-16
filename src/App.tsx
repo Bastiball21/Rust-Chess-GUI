@@ -109,6 +109,7 @@ function App() {
     { id: "mock1", name: "Engine 1", path: "mock-engine", options: [] },
     { id: "mock2", name: "Engine 2", path: "mock-engine", options: [] }
   ]);
+  const [disabledEngineIds, setDisabledEngineIds] = useState<string[]>([]);
   const enginesRef = useRef(engines);
 
   // Keep enginesRef in sync
@@ -292,7 +293,8 @@ function App() {
       opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
       variant: variant,
       pgn_path: pgnPath,
-      event_name: eventName
+      event_name: eventName,
+      disabled_engine_ids: disabledEngineIds
     };
     await invoke("start_match", { config });
     setActiveTab('schedule');
@@ -300,9 +302,27 @@ function App() {
 
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
   const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
+  const toggleEngineDisabled = async (engineId?: string) => {
+    if (!engineId) return;
+    const nextIds = disabledEngineIds.includes(engineId)
+      ? disabledEngineIds.filter(id => id !== engineId)
+      : [...disabledEngineIds, engineId];
+    setDisabledEngineIds(nextIds);
+    if (matchRunning) {
+      await invoke("set_disabled_engines", { disabled_engine_ids: nextIds });
+    }
+  };
 
   const addEngine = () => { setEngines([...engines, { id: crypto.randomUUID(), name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]); };
-  const removeEngine = (idx: number) => { if (engines.length > 2) { const n = [...engines]; n.splice(idx, 1); setEngines(n); } };
+  const removeEngine = (idx: number) => {
+    if (engines.length > 2) {
+      const removedId = engines[idx].id;
+      const n = [...engines];
+      n.splice(idx, 1);
+      setEngines(n);
+      if (removedId) setDisabledEngineIds(prev => prev.filter(id => id !== removedId));
+    }
+  };
   const updateEnginePath = (idx: number, path: string) => { const n = [...engines]; n[idx].path = path; setEngines(n); };
   const updateEngineName = (idx: number, name: string) => { const n = [...engines]; n[idx].name = name; setEngines(n); };
   const updateEngineFlag = (idx: number, code: string) => { const n = [...engines]; n[idx].country_code = code; setEngines(n); };
@@ -539,6 +559,30 @@ function App() {
                 </>
             ) : (
                 <div className="space-y-2">
+                    <div className="bg-gray-800/60 border border-gray-700 rounded p-2">
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="text-sm font-semibold text-gray-400 uppercase">Engine Toggles</label>
+                            <span className="text-xs text-gray-500">{disabledEngineIds.length} Disabled</span>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            {engines.map((eng) => {
+                                const isDisabled = !!eng.id && disabledEngineIds.includes(eng.id);
+                                const isToggleDisabled = !eng.id;
+                                return (
+                                    <div key={eng.id || eng.name} className={`flex items-center justify-between gap-2 rounded px-2 py-1 border ${isDisabled ? "border-red-500/50 bg-red-900/20" : "border-gray-700 bg-gray-700/40"}`}>
+                                        <span className="text-xs font-semibold">{eng.name}</span>
+                                        <button
+                                            className={`text-xs px-2 py-0.5 rounded ${isToggleDisabled ? "bg-gray-600 text-gray-400 cursor-not-allowed" : isDisabled ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"}`}
+                                            onClick={() => toggleEngineDisabled(eng.id)}
+                                            disabled={isToggleDisabled}
+                                        >
+                                            {isDisabled ? "Disabled" : "Enabled"}
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
                     <div className="flex justify-between items-center mb-2"><label className="text-sm font-semibold text-gray-400 uppercase">Upcoming Games</label><span className="text-xs text-gray-500">{schedule.length} Total</span></div>
                     <div className="flex flex-col gap-2">
                         {schedule.map((game) => (

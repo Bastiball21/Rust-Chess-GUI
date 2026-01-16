@@ -58,6 +58,13 @@ async fn pause_match(state: State<'_, AppState>, paused: bool) -> Result<(), Str
     Ok(())
 }
 
+#[tauri::command]
+async fn set_disabled_engines(state: State<'_, AppState>, disabled_engine_ids: Vec<String>) -> Result<(), String> {
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    if let Some(arbiter) = maybe_arbiter { arbiter.set_disabled_engine_ids(disabled_engine_ids).await; }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -65,7 +72,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState { current_arbiter: Arc::new(Mutex::new(None)), })
-        .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match])
+        .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match, set_disabled_engines])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

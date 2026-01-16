@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
 use std::io::BufRead;
+use std::collections::HashSet;
 
 enum Board {
     Standard(Chess),
@@ -41,6 +42,7 @@ pub struct Arbiter {
     is_paused: Arc<Mutex<bool>>,
     openings: Vec<String>,
     tourney_stats: Arc<Mutex<TournamentStats>>,
+    disabled_engine_ids: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Arbiter {
@@ -76,6 +78,8 @@ impl Arbiter {
              }
         });
 
+        let disabled_engine_ids = config.disabled_engine_ids.iter().cloned().collect();
+
         Ok(Self {
             active_engines: Arc::new(Mutex::new(Vec::new())),
             config,
@@ -88,10 +92,16 @@ impl Arbiter {
             is_paused: Arc::new(Mutex::new(false)),
             openings,
             tourney_stats: Arc::new(Mutex::new(TournamentStats::default())),
+            disabled_engine_ids: Arc::new(Mutex::new(disabled_engine_ids)),
         })
     }
 
     pub async fn set_paused(&self, paused: bool) { *self.is_paused.lock().await = paused; }
+
+    pub async fn set_disabled_engine_ids(&self, disabled_engine_ids: Vec<String>) {
+        let mut disabled_ids = self.disabled_engine_ids.lock().await;
+        *disabled_ids = disabled_engine_ids.into_iter().collect();
+    }
 
     fn generate_pairings(&self) -> Vec<(usize, usize)> {
         let n = self.config.engines.len();
@@ -164,6 +174,38 @@ impl Arbiter {
         for (idx_a, idx_b, game_idx, game_id) in game_tasks {
              if *self.should_stop.lock().await { break; }
 
+             let (white_engine_idx, black_engine_idx) = if self.config.swap_sides && game_idx % 2 != 0 {
+                 (idx_b, idx_a)
+             } else {
+                 (idx_a, idx_b)
+             };
+
+             let (white_disabled, black_disabled) = {
+                 let disabled_ids = self.disabled_engine_ids.lock().await;
+                 (
+                     is_engine_disabled(&disabled_ids, self.config.engines[white_engine_idx].id.as_deref()),
+                     is_engine_disabled(&disabled_ids, self.config.engines[black_engine_idx].id.as_deref())
+                 )
+             };
+
+             if white_disabled || black_disabled {
+                 let (display_result, base_result) = forfeit_result(white_disabled, black_disabled);
+                 let _ = self.schedule_update_tx.send(ScheduledGame {
+                     id: game_id,
+                     white_name: self.config.engines[white_engine_idx].name.clone(),
+                     black_name: self.config.engines[black_engine_idx].name.clone(),
+                     state: "Skipped".to_string(),
+                     result: Some(display_result),
+                 }).await;
+                 if let Some(base_result) = base_result {
+                     let mut stats = self.tourney_stats.lock().await;
+                     let is_white_a = white_engine_idx == 0;
+                     stats.update(&base_result, is_white_a);
+                     let _ = self.tourney_stats_tx.send(stats.clone()).await;
+                 }
+                 continue;
+             }
+
              let permit = semaphore.clone().acquire_owned().await?;
 
              let config = self.config.clone();
@@ -177,6 +219,7 @@ impl Arbiter {
              let pgn_tx = self.pgn_tx.clone();
              let schedule_update_tx = self.schedule_update_tx.clone();
              let openings = self.openings.clone();
+             let disabled_engine_ids = self.disabled_engine_ids.clone();
 
              let task = tokio::spawn(async move {
                 let _permit = permit;
@@ -187,6 +230,32 @@ impl Arbiter {
                 } else {
                     (idx_a, idx_b)
                 };
+
+                let (white_disabled, black_disabled) = {
+                    let disabled_ids = disabled_engine_ids.lock().await;
+                    (
+                        is_engine_disabled(&disabled_ids, config.engines[white_engine_idx].id.as_deref()),
+                        is_engine_disabled(&disabled_ids, config.engines[black_engine_idx].id.as_deref())
+                    )
+                };
+
+                if white_disabled || black_disabled {
+                    let (display_result, base_result) = forfeit_result(white_disabled, black_disabled);
+                    let _ = schedule_update_tx.send(ScheduledGame {
+                        id: game_id,
+                        white_name: config.engines[white_engine_idx].name.clone(),
+                        black_name: config.engines[black_engine_idx].name.clone(),
+                        state: "Skipped".to_string(),
+                        result: Some(display_result),
+                    }).await;
+                    if let Some(base_result) = base_result {
+                        let mut stats = tourney_stats.lock().await;
+                        let is_white_a = white_engine_idx == 0;
+                        stats.update(&base_result, is_white_a);
+                        let _ = tourney_stats_tx.send(stats.clone()).await;
+                    }
+                    return;
+                }
 
                 let white_name = config.engines[white_engine_idx].name.clone();
                 let black_name = config.engines[black_engine_idx].name.clone();
@@ -342,6 +411,19 @@ impl Arbiter {
         for engine in engines_to_stop {
             let _ = engine.quit().await;
         }
+    }
+}
+
+fn is_engine_disabled(disabled_ids: &HashSet<String>, engine_id: Option<&str>) -> bool {
+    engine_id.map_or(false, |id| disabled_ids.contains(id))
+}
+
+fn forfeit_result(white_disabled: bool, black_disabled: bool) -> (String, Option<String>) {
+    match (white_disabled, black_disabled) {
+        (true, true) => ("1/2-1/2 (forfeit)".to_string(), Some("1/2-1/2".to_string())),
+        (true, false) => ("0-1 (forfeit)".to_string(), Some("0-1".to_string())),
+        (false, true) => ("1-0 (forfeit)".to_string(), Some("1-0".to_string())),
+        (false, false) => ("*".to_string(), None),
     }
 }
 
