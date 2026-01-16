@@ -123,14 +123,99 @@ impl Arbiter {
         let (pgn_tx, mut pgn_rx) = mpsc::channel::<String>(100);
 
         let pgn_path = config.pgn_path.clone().unwrap_or_else(|| "tournament.pgn".to_string());
+        let pgn_error_tx = error_tx.clone();
 
         tokio::spawn(async move {
-             use std::io::Write;
-             while let Some(pgn) = pgn_rx.recv().await {
-                 if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
-                     let _ = file.write_all(pgn.as_bytes());
-                 }
-             }
+            use std::io::Write;
+            let mut file = match std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
+                Ok(handle) => Some(handle),
+                Err(err) => {
+                    let _ = pgn_error_tx.send(TournamentError {
+                        engine_id: None,
+                        engine_name: "PGN Writer".to_string(),
+                        game_id: None,
+                        message: format!("Failed to open PGN file {}: {}", pgn_path, err),
+                        failure_count: 0,
+                        disabled: false,
+                    }).await;
+                    eprintln!("Failed to open PGN file {}: {}", pgn_path, err);
+                    None
+                }
+            };
+
+            while let Some(pgn) = pgn_rx.recv().await {
+                if file.is_none() {
+                    match std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
+                        Ok(handle) => file = Some(handle),
+                        Err(err) => {
+                            let _ = pgn_error_tx.send(TournamentError {
+                                engine_id: None,
+                                engine_name: "PGN Writer".to_string(),
+                                game_id: None,
+                                message: format!("Failed to reopen PGN file {}: {}", pgn_path, err),
+                                failure_count: 0,
+                                disabled: false,
+                            }).await;
+                            eprintln!("Failed to reopen PGN file {}: {}", pgn_path, err);
+                            continue;
+                        }
+                    }
+                }
+
+                if let Some(handle) = file.as_mut() {
+                    if let Err(err) = handle.write_all(pgn.as_bytes()) {
+                        let _ = pgn_error_tx.send(TournamentError {
+                            engine_id: None,
+                            engine_name: "PGN Writer".to_string(),
+                            game_id: None,
+                            message: format!("Failed to write PGN to {}: {}", pgn_path, err),
+                            failure_count: 0,
+                            disabled: false,
+                        }).await;
+                        eprintln!("Failed to write PGN to {}: {}", pgn_path, err);
+                        file = None;
+                        if let Ok(mut retry_handle) = std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
+                            if let Err(retry_err) = retry_handle.write_all(pgn.as_bytes()) {
+                                let _ = pgn_error_tx.send(TournamentError {
+                                    engine_id: None,
+                                    engine_name: "PGN Writer".to_string(),
+                                    game_id: None,
+                                    message: format!("Failed to retry PGN write to {}: {}", pgn_path, retry_err),
+                                    failure_count: 0,
+                                    disabled: false,
+                                }).await;
+                                eprintln!("Failed to retry PGN write to {}: {}", pgn_path, retry_err);
+                            } else if let Err(retry_err) = retry_handle.flush() {
+                                let _ = pgn_error_tx.send(TournamentError {
+                                    engine_id: None,
+                                    engine_name: "PGN Writer".to_string(),
+                                    game_id: None,
+                                    message: format!("Failed to flush PGN file {} after retry: {}", pgn_path, retry_err),
+                                    failure_count: 0,
+                                    disabled: false,
+                                }).await;
+                                eprintln!("Failed to flush PGN file {} after retry: {}", pgn_path, retry_err);
+                            } else {
+                                file = Some(retry_handle);
+                            }
+                        }
+                        continue;
+                    }
+
+                    if let Err(err) = handle.flush() {
+                        let _ = pgn_error_tx.send(TournamentError {
+                            engine_id: None,
+                            engine_name: "PGN Writer".to_string(),
+                            game_id: None,
+                            message: format!("Failed to flush PGN file {}: {}", pgn_path, err),
+                            failure_count: 0,
+                            disabled: false,
+                        }).await;
+                        eprintln!("Failed to flush PGN file {}: {}", pgn_path, err);
+                        file = None;
+                    }
+                }
+            }
         });
 
         let pairings = Self::generate_pairings(&config);
