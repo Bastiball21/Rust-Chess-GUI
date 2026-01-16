@@ -32,6 +32,10 @@ pub struct TournamentConfig {
     pub concurrency: Option<u32>,
     pub pgn_path: Option<String>, // Added for PGN saving
     pub event_name: Option<String>, // Added for PGN header
+    pub disabled_engine_ids: Vec<String>,
+    pub resume_state_path: Option<String>,
+    #[serde(default)]
+    pub resume_from_state: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -66,4 +70,10 @@ pub struct ScheduledGame {
     pub black_name: String,
     pub state: String,
     pub result: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TournamentResumeState {
+    pub config: TournamentConfig,
+    pub schedule: Vec<ScheduledGame>,
 }
