@@ -1,6 +1,8 @@
 use tauri::{AppHandle, Manager, Emitter, State};
 use std::path::{Path, PathBuf};
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
+use futures::FutureExt;
 use tokio::sync::mpsc;
 use crate::arbiter::Arbiter;
 use crate::types::{TournamentConfig, GameUpdate, EngineStats, ScheduledGame, TournamentError, TournamentResumeState};
@@ -67,8 +69,26 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, mut config: Tou
     let app_handle_errors = app.clone();
     tokio::spawn(async move { while let Some(error) = error_rx.recv().await { let _ = app_handle_errors.emit("toast", error); } });
 
+    let app_handle = app.clone();
     let arbiter_clone = arbiter.clone();
-    tokio::spawn(async move { if let Err(e) = arbiter_clone.run_tournament().await { println!("Tournament error: {}", e); } });
+    tokio::spawn(async move {
+        let result = AssertUnwindSafe(arbiter_clone.run_tournament()).catch_unwind().await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => println!("Tournament error: {}", e),
+            Err(panic) => {
+                let panic_message = if let Some(message) = panic.downcast_ref::<&str>() {
+                    (*message).to_string()
+                } else if let Some(message) = panic.downcast_ref::<String>() {
+                    message.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                eprintln!("Tournament panic: {}", panic_message);
+                let _ = app_handle.emit("critical-error", panic_message);
+            }
+        }
+    });
     Ok(())
 }
 
@@ -133,8 +153,26 @@ async fn resume_match(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
     let app_handle_errors = app.clone();
     tokio::spawn(async move { while let Some(error) = error_rx.recv().await { let _ = app_handle_errors.emit("toast", error); } });
 
+    let app_handle = app.clone();
     let arbiter_clone = arbiter.clone();
-    tokio::spawn(async move { if let Err(e) = arbiter_clone.run_tournament().await { println!("Tournament error: {}", e); } });
+    tokio::spawn(async move {
+        let result = AssertUnwindSafe(arbiter_clone.run_tournament()).catch_unwind().await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => println!("Tournament error: {}", e),
+            Err(panic) => {
+                let panic_message = if let Some(message) = panic.downcast_ref::<&str>() {
+                    (*message).to_string()
+                } else if let Some(message) = panic.downcast_ref::<String>() {
+                    message.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                eprintln!("Tournament panic: {}", panic_message);
+                let _ = app_handle.emit("critical-error", panic_message);
+            }
+        }
+    });
     Ok(())
 }
 
