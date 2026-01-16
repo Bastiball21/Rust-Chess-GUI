@@ -238,6 +238,7 @@ function App() {
 
   const selectedGameIdRef = useRef<number | null>(null);
   const gameStates = useRef<Record<number, GameStateData>>({});
+  const cleanupTimers = useRef<Record<number, number>>({});
 
   const [tournamentStats, setTournamentStats] = useState<any>(null);
   const [editingEngineIdx, setEditingEngineIdx] = useState<number | null>(null);
@@ -399,6 +400,20 @@ function App() {
     }
   }, [engines.length, selectedEngineIdx]);
 
+  const scheduleGameCleanup = (gameId: number) => {
+    if (cleanupTimers.current[gameId]) return;
+    cleanupTimers.current[gameId] = window.setTimeout(() => {
+      const currentState = gameStates.current[gameId];
+      if (!currentState) return;
+      gameStates.current[gameId] = {
+        ...currentState,
+        moves: [],
+        evalHistory: []
+      };
+      delete cleanupTimers.current[gameId];
+    }, 0);
+  };
+
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
         const u = event.payload as GameUpdate;
@@ -416,6 +431,7 @@ function App() {
             }
         }
         const state = gameStates.current[gameId];
+        const wasFinished = Boolean(state.matchResult);
         state.fen = u.fen;
         state.whiteEngineIdx = u.white_engine_idx;
         state.blackEngineIdx = u.black_engine_idx;
@@ -427,6 +443,9 @@ function App() {
           state.evalHistory.push({ moveNumber: state.moves.length, score: state.activeWhiteStats.score || 0 });
         }
         if (u.result) state.matchResult = `Game Over: ${u.result}`;
+        if (u.result && !wasFinished) {
+          scheduleGameCleanup(gameId);
+        }
         if (selectedGameIdRef.current === null || selectedGameIdRef.current === gameId) {
             if (selectedGameIdRef.current === null) { setSelectedGameId(gameId); selectedGameIdRef.current = gameId; }
             setFen(state.fen); setMoves([...state.moves]); setLastMove([...state.lastMove]);
