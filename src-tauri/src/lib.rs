@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use crate::arbiter::Arbiter;
-use crate::types::{TournamentConfig, GameUpdate, EngineStats, ScheduledGame, TournamentResumeState};
+use crate::types::{TournamentConfig, GameUpdate, EngineStats, ScheduledGame, TournamentError, TournamentResumeState};
 use crate::stats::TournamentStats;
 
 pub mod arbiter;
@@ -30,8 +30,9 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, mut config: Tou
     let (stats_tx, mut stats_rx) = mpsc::channel::<EngineStats>(100);
     let (tourney_stats_tx, mut tourney_stats_rx) = mpsc::channel::<TournamentStats>(100);
     let (schedule_update_tx, mut schedule_update_rx) = mpsc::channel::<ScheduledGame>(100);
+    let (error_tx, mut error_rx) = mpsc::channel::<TournamentError>(100);
 
-    let arbiter = Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx).await.map_err(|e| e.to_string())?;
+    let arbiter = Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx, error_tx).await.map_err(|e| e.to_string())?;
     let arbiter = Arc::new(arbiter);
     { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); *arbiter_lock = Some(arbiter.clone()); }
 
@@ -46,6 +47,9 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, mut config: Tou
 
     let app_handle_schedule = app.clone();
     tokio::spawn(async move { while let Some(update) = schedule_update_rx.recv().await { let _ = app_handle_schedule.emit("schedule-update", update); } });
+
+    let app_handle_errors = app.clone();
+    tokio::spawn(async move { while let Some(error) = error_rx.recv().await { let _ = app_handle_errors.emit("toast", error); } });
 
     let arbiter_clone = arbiter.clone();
     tokio::spawn(async move { if let Err(e) = arbiter_clone.run_tournament().await { println!("Tournament error: {}", e); } });
@@ -91,8 +95,9 @@ async fn resume_match(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
     let (stats_tx, mut stats_rx) = mpsc::channel::<EngineStats>(100);
     let (tourney_stats_tx, mut tourney_stats_rx) = mpsc::channel::<TournamentStats>(100);
     let (schedule_update_tx, mut schedule_update_rx) = mpsc::channel::<ScheduledGame>(100);
+    let (error_tx, mut error_rx) = mpsc::channel::<TournamentError>(100);
 
-    let arbiter = Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx).await.map_err(|e| e.to_string())?;
+    let arbiter = Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx, error_tx).await.map_err(|e| e.to_string())?;
     arbiter.load_schedule_state(resume_state.schedule).await;
     let arbiter = Arc::new(arbiter);
     { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); *arbiter_lock = Some(arbiter.clone()); }
@@ -108,6 +113,9 @@ async fn resume_match(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
 
     let app_handle_schedule = app.clone();
     tokio::spawn(async move { while let Some(update) = schedule_update_rx.recv().await { let _ = app_handle_schedule.emit("schedule-update", update); } });
+
+    let app_handle_errors = app.clone();
+    tokio::spawn(async move { while let Some(error) = error_rx.recv().await { let _ = app_handle_errors.emit("toast", error); } });
 
     let arbiter_clone = arbiter.clone();
     tokio::spawn(async move { if let Err(e) = arbiter_clone.run_tournament().await { println!("Tournament error: {}", e); } });

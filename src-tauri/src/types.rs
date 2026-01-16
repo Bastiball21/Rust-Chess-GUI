@@ -48,6 +48,16 @@ pub struct GameUpdate {
     pub game_id: usize,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TournamentError {
+    pub engine_id: Option<String>,
+    pub engine_name: String,
+    pub game_id: Option<usize>,
+    pub message: String,
+    pub failure_count: u32,
+    pub disabled: bool,
+}
+
 // New struct for frequent time updates
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimeUpdate {
