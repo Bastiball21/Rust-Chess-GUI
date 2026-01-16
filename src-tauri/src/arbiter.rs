@@ -1197,19 +1197,53 @@ fn load_openings(path: &str) -> Option<Vec<String>> {
 }
 
 fn parse_info(line: &str, engine_idx: usize) -> Option<EngineStats> {
-    let mut depth = 0; let mut nodes = 0; let mut score_cp = None; let mut score_mate = None; let mut pv = String::new(); let mut nps = 0;
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    let mut i = 0;
-    while i < parts.len() {
-        match parts[i] {
-            "depth" => { if i+1 < parts.len() { depth = parts[i+1].parse().unwrap_or(0); } },
-            "nodes" => { if i+1 < parts.len() { nodes = parts[i+1].parse().unwrap_or(0); } },
-            "nps" => { if i+1 < parts.len() { nps = parts[i+1].parse().unwrap_or(0); } },
-            "score" => { if i+2 < parts.len() { let kind = parts[i+1]; let val = parts[i+2].parse().unwrap_or(0); if kind == "cp" { score_cp = Some(val); } else if kind == "mate" { score_mate = Some(val); } i += 2; } },
-            "pv" => { pv = parts[i+1..].join(" "); break; }
+    let mut depth = 0;
+    let mut nodes = 0;
+    let mut score_cp = None;
+    let mut score_mate = None;
+    let mut pv = String::new();
+    let mut nps = 0;
+    let mut iter = line.split_whitespace().peekable();
+    while let Some(token) = iter.next() {
+        match token {
+            "depth" => {
+                if let Some(value) = iter.next() {
+                    depth = value.parse().unwrap_or(0);
+                }
+            }
+            "nodes" => {
+                if let Some(value) = iter.next() {
+                    nodes = value.parse().unwrap_or(0);
+                }
+            }
+            "nps" => {
+                if let Some(value) = iter.next() {
+                    nps = value.parse().unwrap_or(0);
+                }
+            }
+            "score" => {
+                let kind = iter.next();
+                let value = iter.next();
+                match (kind, value) {
+                    (Some("cp"), Some(val)) => {
+                        score_cp = val.parse().ok();
+                    }
+                    (Some("mate"), Some(val)) => {
+                        score_mate = val.parse().ok();
+                    }
+                    _ => {}
+                }
+            }
+            "pv" => {
+                let mut moves = Vec::new();
+                while let Some(mv) = iter.next() {
+                    moves.push(mv);
+                }
+                pv = moves.join(" ");
+                break;
+            }
             _ => {}
         }
-        i += 1;
     }
     Some(EngineStats { depth, score_cp, score_mate, nodes, nps, pv, engine_idx, game_id: 0 }) // Placeholder 0, will be overwritten or context aware
 }
