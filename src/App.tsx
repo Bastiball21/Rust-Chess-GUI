@@ -665,23 +665,11 @@ function App() {
   };
 
   const savePreset = async () => {
-      const preset = {
-          tournamentMode, engines: engines.map(e => e.id), gamesCount, concurrency, swapSides,
-          openingFen, openingFile, openingMode, openingOrder, variant, eventName,
-          timeControl: { baseH, baseM, baseS, incH, incM, incS }
-      };
-      const path = await save({ filters: [{ name: 'JSON', extensions: ['json'] }] });
-      if (path) {
-          alert("Save preset logic ready, but requires FS access. Data prepared.");
-          console.log(JSON.stringify(preset));
-      }
+      return;
   };
 
   const loadPreset = async () => {
-      const selected = await openDialog({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
-      if (selected) {
-           alert("Load preset logic ready. Requires FS access to read file content.");
-      }
+      return;
   };
 
   const pvShapes = useMemo(() => {
@@ -788,8 +776,22 @@ function App() {
                     )}
                     {/* Presets & DB */}
                     <div className="flex gap-2 mb-2">
-                         <button onClick={savePreset} className="flex-1 bg-gray-700 p-2 rounded text-xs flex items-center justify-center gap-1 hover:bg-gray-600"><Save size={14}/> Save Preset</button>
-                         <button onClick={loadPreset} className="flex-1 bg-gray-700 p-2 rounded text-xs flex items-center justify-center gap-1 hover:bg-gray-600"><FolderOpen size={14}/> Load Preset</button>
+                         <button
+                             onClick={savePreset}
+                             disabled
+                             title="Preset export is not yet available."
+                             className="flex-1 bg-gray-700/70 p-2 rounded text-xs flex items-center justify-center gap-1 cursor-not-allowed text-gray-400"
+                         >
+                             <Save size={14}/> Save Preset
+                         </button>
+                         <button
+                             onClick={loadPreset}
+                             disabled
+                             title="Preset import is not yet available."
+                             className="flex-1 bg-gray-700/70 p-2 rounded text-xs flex items-center justify-center gap-1 cursor-not-allowed text-gray-400"
+                         >
+                             <FolderOpen size={14}/> Load Preset
+                         </button>
                     </div>
                     <div className="mb-2">
                         <button onClick={() => setShowEngineManager(true)} className="w-full bg-indigo-600 p-2 rounded text-sm font-bold flex items-center justify-center gap-2 hover:bg-indigo-500"><Database size={16}/> Manage Engine Library</button>
