@@ -336,7 +336,10 @@ function App() {
     if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
   };
   const selectOpeningFile = async () => {
-    const selected = await openDialog({ multiple: false, filters: [{ name: 'Openings', extensions: ['epd', 'pgn'] }] });
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Openings', extensions: ['epd', 'pgn', 'fen', 'txt'] }]
+    });
     if (selected && typeof selected === 'string') setOpeningFile(selected);
   };
   const selectPgnPath = async () => {
