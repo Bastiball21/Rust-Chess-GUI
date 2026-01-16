@@ -20,6 +20,9 @@ importers:
       '@tauri-apps/plugin-store':
         specifier: ^2.4.1
         version: 2.4.1
+      chess.js:
+        specifier: ^1.4.0
+        version: 1.4.0
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -2117,6 +2120,9 @@ packages:
 
   chardet@0.7.0:
     resolution: {integrity: sha512-mT8iDcrh03qDGRRmoA2hmBJnxpllMR+0/0qlzjqZES6NdiWDcZkCNAk4rPFZ9Q85r27unkiNNg8ZOiwZXBHwcA==}
+
+  chess.js@1.4.0:
+    resolution: {integrity: sha512-BBJgrrtKQOzFLonR0l+k64A98NLemPwNsCskwb+29bRwobUa4iTm51E1kwGPbWXAcfdDa18nad6vpPPKPWarqw==}
 
   chessground@7.12.0:
     resolution: {integrity: sha512-MQG7c4Hsy1dCkMFFv4LTaRauVSmWF8/dukion1qLCh5pIcKyoa5onbmbglAdDXOYhBbAZVf1F289wy0DeDEBJQ==}
@@ -8006,7 +8012,9 @@ snapshots:
       source-map: 0.6.1
       string-length: 2.0.0
     transitivePeerDependencies:
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@jest/source-map@24.9.0':
     dependencies:
@@ -9249,6 +9257,8 @@ snapshots:
       supports-color: 7.2.0
 
   chardet@0.7.0: {}
+
+  chess.js@1.4.0: {}
 
   chessground@7.12.0: {}
 
@@ -11574,7 +11584,9 @@ snapshots:
       pretty-format: 24.9.0
       throat: 4.1.0
     transitivePeerDependencies:
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   jest-leak-detector@24.9.0:
     dependencies:
