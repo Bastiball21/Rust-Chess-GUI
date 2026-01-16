@@ -148,6 +148,7 @@ function App() {
 
   const [tournamentStats, setTournamentStats] = useState<any>(null);
   const [editingEngineIdx, setEditingEngineIdx] = useState<number | null>(null);
+  const [selectedEngineIdx, setSelectedEngineIdx] = useState(0);
 
   // Sync engine names/flags if changed
   useEffect(() => {
@@ -162,13 +163,30 @@ function App() {
   }, [engines, whiteEngineIdx, blackEngineIdx]);
 
   useEffect(() => {
+    const normalizeEngines = (list: EngineConfig[], namePrefix: string) => (
+      list.map((engine, idx) => ({
+        id: engine.id ?? crypto.randomUUID(),
+        name: engine.name ?? `${namePrefix} ${idx + 1}`,
+        path: engine.path ?? "",
+        options: Array.isArray(engine.options) ? engine.options : [],
+        country_code: engine.country_code,
+        args: Array.isArray(engine.args) ? engine.args : [],
+        working_directory: engine.working_directory ?? "",
+        protocol: engine.protocol
+      }))
+    );
+
     const initStore = async () => {
       const s = await load('settings.json');
       setStore(s);
       const savedEngines = await s.get("active_engines");
       const savedLibrary = await s.get("engine_library");
-      if (savedEngines) setEngines(savedEngines as EngineConfig[]);
-      if (savedLibrary) setEngineLibrary(savedLibrary as EngineConfig[]);
+      if (savedEngines) {
+        setEngines(normalizeEngines(savedEngines as EngineConfig[], "Engine"));
+      }
+      if (savedLibrary) {
+        setEngineLibrary(normalizeEngines(savedLibrary as EngineConfig[], "Library Engine"));
+      }
     };
     initStore();
   }, []);
@@ -179,6 +197,12 @@ function App() {
     store.set("engine_library", engineLibrary);
     store.save();
   }, [engines, engineLibrary, store]);
+
+  useEffect(() => {
+    if (selectedEngineIdx >= engines.length) {
+      setSelectedEngineIdx(Math.max(0, engines.length - 1));
+    }
+  }, [engines.length, selectedEngineIdx]);
 
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
@@ -301,11 +325,34 @@ function App() {
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
   const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
 
-  const addEngine = () => { setEngines([...engines, { id: crypto.randomUUID(), name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]); };
+  const addEngine = () => {
+    setEngines([
+      ...engines,
+      {
+        id: crypto.randomUUID(),
+        name: `Engine ${engines.length + 1}`,
+        path: "mock-engine",
+        options: [],
+        args: [],
+        working_directory: ""
+      }
+    ]);
+  };
   const removeEngine = (idx: number) => { if (engines.length > 2) { const n = [...engines]; n.splice(idx, 1); setEngines(n); } };
   const updateEnginePath = (idx: number, path: string) => { const n = [...engines]; n[idx].path = path; setEngines(n); };
   const updateEngineName = (idx: number, name: string) => { const n = [...engines]; n[idx].name = name; setEngines(n); };
   const updateEngineFlag = (idx: number, code: string) => { const n = [...engines]; n[idx].country_code = code; setEngines(n); };
+  const updateEngineWorkingDirectory = (idx: number, workingDirectory: string) => {
+    const n = [...engines];
+    n[idx].working_directory = workingDirectory;
+    setEngines(n);
+  };
+
+  const updateEngineArgs = (idx: number, args: string[]) => {
+    const n = [...engines];
+    n[idx].args = args;
+    setEngines(n);
+  };
 
   const updateEngineOption = (engIdx: number, optName: string, optVal: string) => {
       const n = [...engines]; const opts = n[engIdx].options;
@@ -313,8 +360,18 @@ function App() {
       if (existing >= 0) opts[existing][1] = optVal; else opts.push([optName, optVal]);
       setEngines(n);
   };
+  const updateEngineOptionAt = (engIdx: number, optIdx: number, key: string, val: string) => {
+      const n = [...engines];
+      n[engIdx].options[optIdx] = [key, val];
+      setEngines(n);
+  };
   const removeEngineOption = (engIdx: number, optName: string) => {
       const n = [...engines]; n[engIdx].options = n[engIdx].options.filter(o => o[0] !== optName);
+      setEngines(n);
+  };
+  const removeEngineOptionAt = (engIdx: number, optIdx: number) => {
+      const n = [...engines];
+      n[engIdx].options.splice(optIdx, 1);
       setEngines(n);
   };
 
@@ -470,7 +527,11 @@ function App() {
                         </div>
                         <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
                             {engines.map((eng, idx) => (
-                                <div key={idx} className="bg-gray-700 p-2 rounded flex flex-col gap-1 relative border border-gray-600">
+                                <div
+                                  key={idx}
+                                  className={`bg-gray-700 p-2 rounded flex flex-col gap-1 relative border ${selectedEngineIdx === idx ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-600'}`}
+                                  onClick={() => setSelectedEngineIdx(idx)}
+                                >
                                     <div className="flex justify-between items-center gap-2">
                                         <div className="flex items-center gap-1 w-full">
                                             <Flag code={eng.country_code} />
@@ -488,6 +549,109 @@ function App() {
                                 </div>
                             ))}
                         </div>
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-gray-400 uppercase">Engine Settings</label>
+                        <select
+                          className="bg-gray-700 p-2 rounded w-full text-sm"
+                          value={selectedEngineIdx}
+                          onChange={(e) => setSelectedEngineIdx(parseInt(e.target.value, 10))}
+                        >
+                          {engines.map((eng, idx) => (
+                            <option key={eng.id ?? idx} value={idx}>{eng.name}</option>
+                          ))}
+                        </select>
+                        {engines[selectedEngineIdx] && (
+                          <div className="bg-gray-800 border border-gray-700 rounded p-3 space-y-3">
+                            <div className="space-y-1">
+                              <label className="text-xs uppercase text-gray-400">Working Directory</label>
+                              <input
+                                className="bg-gray-700 p-2 rounded w-full text-xs"
+                                placeholder="Working Directory"
+                                value={engines[selectedEngineIdx].working_directory || ""}
+                                onChange={(e) => updateEngineWorkingDirectory(selectedEngineIdx, e.target.value)}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs uppercase text-gray-400">Args</label>
+                                <button
+                                  className="bg-green-600 px-2 py-0.5 rounded text-xs hover:bg-green-500"
+                                  onClick={() => updateEngineArgs(selectedEngineIdx, [...(engines[selectedEngineIdx].args || []), ""])}
+                                >
+                                  + Add Arg
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {(engines[selectedEngineIdx].args || []).map((arg, argIdx) => (
+                                  <div key={`${selectedEngineIdx}-arg-${argIdx}`} className="flex gap-2 items-center">
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-full text-xs"
+                                      placeholder="Argument"
+                                      value={arg}
+                                      onChange={(e) => {
+                                        const nextArgs = [...(engines[selectedEngineIdx].args || [])];
+                                        nextArgs[argIdx] = e.target.value;
+                                        updateEngineArgs(selectedEngineIdx, nextArgs);
+                                      }}
+                                    />
+                                    <button
+                                      className="text-red-400 hover:text-red-300"
+                                      onClick={() => {
+                                        const nextArgs = [...(engines[selectedEngineIdx].args || [])];
+                                        nextArgs.splice(argIdx, 1);
+                                        updateEngineArgs(selectedEngineIdx, nextArgs);
+                                      }}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                                {(engines[selectedEngineIdx].args || []).length === 0 && (
+                                  <div className="text-xs text-gray-500">No args configured.</div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs uppercase text-gray-400">UCI Options</label>
+                                <button
+                                  className="bg-green-600 px-2 py-0.5 rounded text-xs hover:bg-green-500"
+                                  onClick={() => updateEngineOptionAt(selectedEngineIdx, engines[selectedEngineIdx].options.length, "", "")}
+                                >
+                                  + Add Option
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {engines[selectedEngineIdx].options.map(([key, val], optIdx) => (
+                                  <div key={`${selectedEngineIdx}-opt-${optIdx}`} className="flex gap-2 items-center">
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-1/2 text-xs"
+                                      placeholder="Name"
+                                      value={key}
+                                      onChange={(e) => updateEngineOptionAt(selectedEngineIdx, optIdx, e.target.value, val)}
+                                    />
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-1/2 text-xs"
+                                      placeholder="Value"
+                                      value={val}
+                                      onChange={(e) => updateEngineOptionAt(selectedEngineIdx, optIdx, key, e.target.value)}
+                                    />
+                                    <button
+                                      className="text-red-400 hover:text-red-300"
+                                      onClick={() => removeEngineOptionAt(selectedEngineIdx, optIdx)}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                                {engines[selectedEngineIdx].options.length === 0 && (
+                                  <div className="text-xs text-gray-500">No options configured.</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                     </div>
                     {/* Time & Options */}
                     <div className="space-y-2">
