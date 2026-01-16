@@ -32,6 +32,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -46,8 +48,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run tests
-        run: cargo test
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test --verbose
 
       - name: Build Tauri app
         run: npm run tauri build
