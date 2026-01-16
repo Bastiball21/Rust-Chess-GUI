@@ -272,37 +272,42 @@ impl Arbiter {
         &config, &game_update_tx, &should_stop, &is_paused, game_id
                 ).await;
 
-                if let Ok((result, moves_played)) = res {
-                    // Notify Finished
-                    let _ = schedule_update_tx.send(ScheduledGame {
-                        id: game_id,
-                        white_name: white_name.clone(),
-                        black_name: black_name.clone(),
-                        state: "Finished".to_string(),
-                        result: Some(result.clone())
-                    }).await;
+                match res {
+                    Ok((result, moves_played)) => {
+                        // Notify Finished
+                        let _ = schedule_update_tx.send(ScheduledGame {
+                            id: game_id,
+                            white_name: white_name.clone(),
+                            black_name: black_name.clone(),
+                            state: "Finished".to_string(),
+                            result: Some(result.clone())
+                        }).await;
 
-                    let white_name_pgn = &config.engines[white_idx].name;
-                    let black_name_pgn = &config.engines[black_idx].name;
-                    let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
-                    let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen, event_name, game_id);
-                    let _ = pgn_tx.send(pgn).await;
+                        let white_name_pgn = &config.engines[white_idx].name;
+                        let black_name_pgn = &config.engines[black_idx].name;
+                        let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
+                        let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen, event_name, game_id);
+                        let _ = pgn_tx.send(pgn).await;
 
-                    {
-                        let mut stats = tourney_stats.lock().await;
-                        let is_white_a = white_idx == 0;
-                        stats.update(&result, is_white_a);
-                        let _ = tourney_stats_tx.send(stats.clone()).await;
+                        {
+                            let mut stats = tourney_stats.lock().await;
+                            let is_white_a = white_idx == 0;
+                            stats.update(&result, is_white_a);
+                            let _ = tourney_stats_tx.send(stats.clone()).await;
+                        }
                     }
-                } else {
-                     // Notify Error/Stopped
-                     let _ = schedule_update_tx.send(ScheduledGame {
-                        id: game_id,
-                        white_name: white_name.clone(),
-                        black_name: black_name.clone(),
-                        state: "Aborted".to_string(),
-                        result: None
-                    }).await;
+                    Err(err) => {
+                        if err.to_string() != "stopped" {
+                            println!("Game {} failed: {}", game_id, err);
+                        }
+                        let _ = schedule_update_tx.send(ScheduledGame {
+                            id: game_id,
+                            white_name: white_name.clone(),
+                            black_name: black_name.clone(),
+                            state: "Aborted".to_string(),
+                            result: None
+                        }).await;
+                    }
                 }
 
                 let _ = engine_a.quit().await;
@@ -496,7 +501,9 @@ async fn play_game_static(
     let mut game_result = "*".to_string();
 
     loop {
-        if *should_stop.lock().await { return Ok(("stopped".to_string(), moves_history)); }
+        if *should_stop.lock().await {
+            return Err(anyhow::anyhow!("stopped"));
+        }
         if *is_paused.lock().await { sleep(Duration::from_millis(100)).await; continue; }
 
         // Material Draw Adjudication (Strict K vs K or Insufficient Material)
