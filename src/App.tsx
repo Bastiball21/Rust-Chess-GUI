@@ -124,6 +124,7 @@ function App() {
   const [openingFen, setOpeningFen] = useState("");
   const [openingFile, setOpeningFile] = useState("");
   const [openingMode, setOpeningMode] = useState<'fen' | 'file'>('fen');
+  const [openingOrder, setOpeningOrder] = useState<'sequential' | 'random'>('sequential');
   const [variant, setVariant] = useState("standard");
   const [eventName, setEventName] = useState("CCRL GUI Tournament");
 
@@ -290,6 +291,7 @@ function App() {
       games_count: gamesCount, concurrency: concurrency, swap_sides: swapSides,
       opening_fen: (openingMode === 'fen' && openingFen) ? openingFen : null,
       opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
+      opening_order: (openingMode === 'file' && openingFile) ? openingOrder : null,
       variant: variant,
       pgn_path: pgnPath,
       event_name: eventName
@@ -323,7 +325,10 @@ function App() {
     if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
   };
   const selectOpeningFile = async () => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Openings', extensions: ['epd', 'pgn'] }] });
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'Openings', extensions: ['epd', 'pgn', 'fen', 'txt'] }]
+    });
     if (selected && typeof selected === 'string') setOpeningFile(selected);
   };
 
@@ -348,7 +353,7 @@ function App() {
   const savePreset = async () => {
       const preset = {
           tournamentMode, engines: engines.map(e => e.id), gamesCount, concurrency, swapSides,
-          openingFen, openingFile, openingMode, variant, eventName,
+          openingFen, openingFile, openingMode, openingOrder, variant, eventName,
           timeControl: { baseH, baseM, baseS, incH, incM, incS }
       };
       const path = await save({ filters: [{ name: 'JSON', extensions: ['json'] }] });
@@ -526,9 +531,22 @@ function App() {
                         {openingMode === 'fen' ? (
                             <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="FEN..." value={openingFen} onChange={(e) => setOpeningFen(e.target.value)} />
                         ) : (
-                            <div className="flex gap-2">
-                                <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Select file..." value={openingFile} readOnly />
-                                <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500" onClick={selectOpeningFile}>...</button>
+                            <div className="flex flex-col gap-2">
+                                <div className="flex gap-2">
+                                    <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Select file..." value={openingFile} readOnly />
+                                    <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500" onClick={selectOpeningFile}>...</button>
+                                </div>
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="text-gray-500">Order</span>
+                                    <select
+                                        className="bg-gray-700 p-1 rounded text-sm"
+                                        value={openingOrder}
+                                        onChange={(e) => setOpeningOrder(e.target.value as 'sequential' | 'random')}
+                                    >
+                                        <option value="sequential">Sequential</option>
+                                        <option value="random">Random</option>
+                                    </select>
+                                </div>
                             </div>
                         )}
                     </div>
