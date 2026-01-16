@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
 import { Board } from "./components/Board";
 import { EnginePanel } from "./components/EnginePanel";
 import { PvBoard } from "./components/PvBoard";
@@ -82,6 +83,50 @@ interface ScheduledGame {
   state: string;
   result: string | null;
 }
+
+interface ScheduleListData {
+  schedule: ScheduledGame[];
+  selectedGameId: number | null;
+  onSelect: (id: number) => void;
+}
+
+const scheduleRowHeight = 92;
+const scheduleListMaxHeight = 360;
+
+const ScheduleRow = ({ index, style, data }: ListChildComponentProps<ScheduleListData>) => {
+  const game = data.schedule[index];
+
+  if (!game) {
+    return null;
+  }
+
+  const isActive = game.state === "Active";
+  const isSelected = data.selectedGameId === game.id;
+
+  return (
+    <div style={{ ...style, padding: "4px 0" }}>
+      <div
+        className={`p-2 rounded text-xs border flex flex-col gap-1 cursor-pointer transition ${isActive ? "bg-blue-900/30 border-blue-600" : "bg-gray-700 border-gray-700"} ${isSelected ? "ring-2 ring-yellow-400" : ""}`}
+        onClick={() => data.onSelect(game.id)}
+      >
+        <div className="flex justify-between font-bold">
+          <span>#{game.id}</span>
+          <span className={isActive ? "text-green-400" : "text-gray-400"}>{game.state}</span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-white">{game.white_name}</span>
+          <span className="text-gray-500 font-mono">vs</span>
+          <span className="text-white">{game.black_name}</span>
+        </div>
+        {game.result && (
+          <div className="mt-1 text-center font-mono font-bold text-yellow-400 bg-gray-800 rounded py-0.5">
+            {game.result}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 interface TournamentConfig {
   mode: "Match" | "RoundRobin" | "Gauntlet";
@@ -693,6 +738,16 @@ function App() {
       return shapes;
   }, [activeWhiteStats.pv, activeBlackStats.pv]);
 
+  const scheduleListHeight = Math.min(schedule.length * scheduleRowHeight, scheduleListMaxHeight) || scheduleRowHeight;
+  const scheduleListData = useMemo(
+    () => ({
+      schedule,
+      selectedGameId,
+      onSelect: handleGameSelect
+    }),
+    [schedule, selectedGameId, handleGameSelect]
+  );
+
   return (
     <div className="h-screen w-screen bg-gray-900 text-white flex overflow-hidden text-lg">
       {showResumePrompt && savedTournament && (
@@ -1073,15 +1128,16 @@ function App() {
                         </div>
                     </div>
                     <div className="flex justify-between items-center mb-2"><label className="text-sm font-semibold text-gray-400 uppercase">Upcoming Games</label><span className="text-xs text-gray-500">{schedule.length} Total</span></div>
-                    <div className="flex flex-col gap-2">
-                        {schedule.map((game) => (
-                            <div key={game.id} className={`p-2 rounded text-xs border flex flex-col gap-1 cursor-pointer transition ${game.state === 'Active' ? 'bg-blue-900/30 border-blue-600' : 'bg-gray-700 border-gray-700'} ${selectedGameId === game.id ? 'ring-2 ring-yellow-400' : ''}`} onClick={() => handleGameSelect(game.id)}>
-                                <div className="flex justify-between font-bold"><span>#{game.id}</span><span className={game.state === 'Active' ? 'text-green-400' : 'text-gray-400'}>{game.state}</span></div>
-                                <div className="flex justify-between items-center"><span className="text-white">{game.white_name}</span><span className="text-gray-500 font-mono">vs</span><span className="text-white">{game.black_name}</span></div>
-                                {game.result && <div className="mt-1 text-center font-mono font-bold text-yellow-400 bg-gray-800 rounded py-0.5">{game.result}</div>}
-                            </div>
-                        ))}
-                    </div>
+                    <List
+                        height={scheduleListHeight}
+                        itemCount={schedule.length}
+                        itemSize={scheduleRowHeight}
+                        width="100%"
+                        itemData={scheduleListData}
+                        className="pr-1"
+                    >
+                        {ScheduleRow}
+                    </List>
                 </div>
             )}
         </div>
