@@ -31,11 +31,9 @@ jobs:
             ${{ runner.os }}-node-modules-
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
-          components: rustfmt, clippy
 
       - name: Cache cargo registry
         uses: actions/cache@v4
