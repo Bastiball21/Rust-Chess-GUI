@@ -9,7 +9,8 @@ import EngineManager from "./components/EngineManager";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import { open as openPath } from "@tauri-apps/plugin-opener";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { Cog, Plus, Trash2, FolderOpen, Save, Database, Play, ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -59,12 +60,49 @@ interface EngineConfig {
   protocol?: string;
 }
 
+interface TournamentDraft {
+  tournamentMode: "Match" | "RoundRobin" | "Gauntlet";
+  engines: EngineConfig[];
+  gamesCount: number;
+  concurrency: number;
+  swapSides: boolean;
+  openingFen: string;
+  openingFile: string;
+  openingMode: "fen" | "file";
+  variant: string;
+  eventName: string;
+  timeControl: { baseH: number; baseM: number; baseS: number; incH: number; incM: number; incS: number };
+  savedAt: string;
+}
+
 interface ScheduledGame {
   id: number;
   white_name: string;
   black_name: string;
   state: string;
   result: string | null;
+}
+
+interface TournamentConfig {
+  mode: "Match" | "RoundRobin" | "Gauntlet";
+  engines: EngineConfig[];
+  time_control: { base_ms: number; inc_ms: number };
+  games_count: number;
+  swap_sides: boolean;
+  opening_fen?: string | null;
+  opening_file?: string | null;
+  opening_order?: string | null;
+  variant: string;
+  concurrency?: number | null;
+  pgn_path?: string | null;
+  event_name?: string | null;
+  resume_state_path?: string | null;
+  resume_from_state?: boolean;
+}
+
+interface TournamentResumeState {
+  config: TournamentConfig;
+  schedule: ScheduledGame[];
 }
 
 interface GameStateData {
@@ -109,6 +147,7 @@ function App() {
     { id: "mock1", name: "Engine 1", path: "mock-engine", options: [] },
     { id: "mock2", name: "Engine 2", path: "mock-engine", options: [] }
   ]);
+  const [disabledEngineIds, setDisabledEngineIds] = useState<string[]>([]);
   const enginesRef = useRef(engines);
 
   // Keep enginesRef in sync
@@ -124,9 +163,13 @@ function App() {
   const [openingFen, setOpeningFen] = useState("");
   const [openingFile, setOpeningFile] = useState("");
   const [openingMode, setOpeningMode] = useState<'fen' | 'file'>('fen');
+  const [openingOrder, setOpeningOrder] = useState<'sequential' | 'random'>('sequential');
   const [variant, setVariant] = useState("standard");
   const [eventName, setEventName] = useState("CCRL GUI Tournament");
   const [remainingRounds, setRemainingRounds] = useState(0);
+  const [pgnPath, setPgnPath] = useState("");
+  const [defaultPgnPath, setDefaultPgnPath] = useState("");
+  const [resolvedPgnPath, setResolvedPgnPath] = useState<string | null>(null);
 
   const [baseH, setBaseH] = useState(0);
   const [baseM, setBaseM] = useState(1);
@@ -138,17 +181,23 @@ function App() {
   const [isPaused, setIsPaused] = useState(false);
   const [matchRunning, setMatchRunning] = useState(false);
   const [store, setStore] = useState<any>(null);
+  const [draftRestoredAt, setDraftRestoredAt] = useState<string | null>(null);
+  const [activeTournamentConfig, setActiveTournamentConfig] = useState<any>(null);
 
   const [activeTab, setActiveTab] = useState<'settings' | 'schedule'>('settings');
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [savedTournament, setSavedTournament] = useState<TournamentResumeState | null>(null);
+  const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [defaultPgnPath, setDefaultPgnPath] = useState<string | null>(null);
 
   const selectedGameIdRef = useRef<number | null>(null);
   const gameStates = useRef<Record<number, GameStateData>>({});
 
   const [tournamentStats, setTournamentStats] = useState<any>(null);
   const [editingEngineIdx, setEditingEngineIdx] = useState<number | null>(null);
+  const [selectedEngineIdx, setSelectedEngineIdx] = useState(0);
 
   // Sync engine names/flags if changed
   useEffect(() => {
@@ -163,15 +212,90 @@ function App() {
   }, [engines, whiteEngineIdx, blackEngineIdx]);
 
   useEffect(() => {
+    const normalizeEngines = (list: EngineConfig[], namePrefix: string) => (
+      list.map((engine, idx) => ({
+        id: engine.id ?? crypto.randomUUID(),
+        name: engine.name ?? `${namePrefix} ${idx + 1}`,
+        path: engine.path ?? "",
+        options: Array.isArray(engine.options) ? engine.options : [],
+        country_code: engine.country_code,
+        args: Array.isArray(engine.args) ? engine.args : [],
+        working_directory: engine.working_directory ?? "",
+        protocol: engine.protocol
+      }))
+    );
+
     const initStore = async () => {
       const s = await load('settings.json');
       setStore(s);
       const savedEngines = await s.get("active_engines");
       const savedLibrary = await s.get("engine_library");
+      const savedDraft = await s.get("tournament_draft");
+      const savedActiveTournament = await s.get("active_tournament");
       if (savedEngines) setEngines(savedEngines as EngineConfig[]);
       if (savedLibrary) setEngineLibrary(savedLibrary as EngineConfig[]);
+      if (savedDraft) {
+        const draft = savedDraft as TournamentDraft;
+        setTournamentMode(draft.tournamentMode ?? "Match");
+        setGamesCount(draft.gamesCount ?? 10);
+        setConcurrency(draft.concurrency ?? 4);
+        setSwapSides(draft.swapSides ?? true);
+        setOpeningFen(draft.openingFen ?? "");
+        setOpeningFile(draft.openingFile ?? "");
+        setOpeningMode(draft.openingMode ?? "fen");
+        setVariant(draft.variant ?? "standard");
+        setEventName(draft.eventName ?? "CCRL GUI Tournament");
+        if (draft.engines?.length) setEngines(draft.engines);
+        if (draft.timeControl) {
+          setBaseH(draft.timeControl.baseH ?? 0);
+          setBaseM(draft.timeControl.baseM ?? 1);
+          setBaseS(draft.timeControl.baseS ?? 0);
+          setIncH(draft.timeControl.incH ?? 0);
+          setIncM(draft.timeControl.incM ?? 0);
+          setIncS(draft.timeControl.incS ?? 1);
+        }
+        setDraftRestoredAt(draft.savedAt ?? new Date().toISOString());
+      }
+      if (savedActiveTournament) setActiveTournamentConfig(savedActiveTournament);
+      if (savedEngines) {
+        setEngines(normalizeEngines(savedEngines as EngineConfig[], "Engine"));
+      }
+      if (savedLibrary) {
+        setEngineLibrary(normalizeEngines(savedLibrary as EngineConfig[], "Library Engine"));
+      }
     };
     initStore();
+  }, []);
+
+  useEffect(() => {
+    const checkSavedTournament = async () => {
+      try {
+        const saved = await invoke<TournamentResumeState | null>("get_saved_tournament");
+        if (saved) {
+          setSavedTournament(saved);
+          setShowResumePrompt(true);
+        }
+      } catch (err) {
+        console.warn("Failed to load saved tournament", err);
+      }
+    };
+    checkSavedTournament();
+  }, []);
+
+  const resolveDefaultPgnPath = async () => {
+    try {
+      const appDir = await appDataDir();
+      const defaultPath = await join(appDir, "tournament.pgn");
+      setDefaultPgnPath(defaultPath);
+      return defaultPath;
+    } catch (err) {
+      console.warn("Failed to resolve default PGN path", err);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    resolveDefaultPgnPath();
   }, []);
 
   useEffect(() => {
@@ -186,6 +310,46 @@ function App() {
       setRemainingRounds(gamesCount);
     }
   }, [gamesCount, matchRunning]);
+    if (!store) return;
+    const draft: TournamentDraft = {
+      tournamentMode,
+      engines,
+      gamesCount,
+      concurrency,
+      swapSides,
+      openingFen,
+      openingFile,
+      openingMode,
+      variant,
+      eventName,
+      timeControl: { baseH, baseM, baseS, incH, incM, incS },
+      savedAt: new Date().toISOString()
+    };
+    store.set("tournament_draft", draft);
+    store.save();
+  }, [
+    tournamentMode,
+    engines,
+    gamesCount,
+    concurrency,
+    swapSides,
+    openingFen,
+    openingFile,
+    openingMode,
+    variant,
+    eventName,
+    baseH,
+    baseM,
+    baseS,
+    incH,
+    incM,
+    incS,
+    store
+  ]);
+    if (selectedEngineIdx >= engines.length) {
+      setSelectedEngineIdx(Math.max(0, engines.length - 1));
+    }
+  }, [engines.length, selectedEngineIdx]);
 
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
@@ -282,6 +446,32 @@ function App() {
       setActiveWhiteStats(s => ({...s, score: 0, pv: ""})); setActiveBlackStats(s => ({...s, score: 0, pv: ""}));
   };
 
+  const applyTournamentConfig = (config: TournamentConfig) => {
+    setTournamentMode(config.mode);
+    setEngines(config.engines);
+    setGamesCount(config.games_count);
+    setConcurrency(config.concurrency ?? 4);
+    setSwapSides(config.swap_sides);
+    setVariant(config.variant);
+    setEventName(config.event_name ?? "CCRL GUI Tournament");
+    const baseMs = config.time_control.base_ms;
+    const incMs = config.time_control.inc_ms;
+    const baseTotalSeconds = Math.floor(baseMs / 1000);
+    const incTotalSeconds = Math.floor(incMs / 1000);
+    setBaseH(Math.floor(baseTotalSeconds / 3600));
+    setBaseM(Math.floor((baseTotalSeconds % 3600) / 60));
+    setBaseS(baseTotalSeconds % 60);
+    setIncH(Math.floor(incTotalSeconds / 3600));
+    setIncM(Math.floor((incTotalSeconds % 3600) / 60));
+    setIncS(incTotalSeconds % 60);
+    const openingFenValue = config.opening_fen ?? "";
+    const openingFileValue = config.opening_file ?? "";
+    setOpeningFen(openingFenValue);
+    setOpeningFile(openingFileValue);
+    const nextOpeningMode = openingFenValue ? "fen" : (openingFileValue ? "file" : "fen");
+    setOpeningMode(nextOpeningMode);
+  };
+
   const startMatch = async () => {
     gameStates.current = {};
     selectedGameIdRef.current = null;
@@ -300,19 +490,60 @@ function App() {
 
     // PGN path handling
     const appDir = await appDataDir();
-    const pgnPath = await join(appDir, "tournament.pgn");
+    const resolvedDefaultPgnPath = defaultPgnPath ?? await resolveDefaultPgnPath();
+    const pgnPath = resolvedDefaultPgnPath ?? await join(appDir, "tournament.pgn");
+    const resumeStatePath = await join(appDir, "tournament_resume.json");
 
-    const config = {
+    const config: TournamentConfig = {
       mode: tournamentMode, engines: engines, time_control: { base_ms: baseMs, inc_ms: incMs },
       games_count: gamesCount, concurrency: concurrency, swap_sides: swapSides,
       opening_fen: (openingMode === 'fen' && openingFen) ? openingFen : null,
       opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
+      opening_order: (openingMode === 'file' && openingFile) ? openingOrder : null,
       variant: variant,
       pgn_path: pgnPath,
-      event_name: eventName
+      event_name: eventName,
+      disabled_engine_ids: disabledEngineIds
+      resume_state_path: resumeStatePath,
+      resume_from_state: false
     };
+    setActiveTournamentConfig(config);
+    if (store) {
+      store.set("active_tournament", config);
+      store.save();
+    }
     await invoke("start_match", { config });
     setActiveTab('schedule');
+  };
+
+  const stopMatch = async () => {
+    await invoke("stop_match");
+    setMatchRunning(false);
+    setActiveTournamentConfig(null);
+    if (store) {
+      await store.delete("active_tournament");
+      store.save();
+    }
+  };
+  const resumeMatch = async () => {
+    if (!savedTournament) return;
+    gameStates.current = {};
+    selectedGameIdRef.current = null;
+    clearGameState();
+    applyTournamentConfig(savedTournament.config);
+    setSchedule(savedTournament.schedule);
+    setMatchRunning(true);
+    setIsPaused(false);
+    setSelectedGameId(null);
+    setShowResumePrompt(false);
+    await invoke("resume_match");
+    setActiveTab('schedule');
+  };
+
+  const discardSavedTournament = async () => {
+    await invoke("discard_saved_tournament");
+    setSavedTournament(null);
+    setShowResumePrompt(false);
   };
 
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
@@ -322,14 +553,55 @@ function App() {
     setRemainingRounds(value);
     if (matchRunning) {
       await invoke("update_remaining_rounds", { remaining_rounds: value });
+  const toggleEngineDisabled = async (engineId?: string) => {
+    if (!engineId) return;
+    const nextIds = disabledEngineIds.includes(engineId)
+      ? disabledEngineIds.filter(id => id !== engineId)
+      : [...disabledEngineIds, engineId];
+    setDisabledEngineIds(nextIds);
+    if (matchRunning) {
+      await invoke("set_disabled_engines", { disabled_engine_ids: nextIds });
     }
   };
 
   const addEngine = () => { setEngines([...engines, { id: crypto.randomUUID(), name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]); };
+  const removeEngine = (idx: number) => {
+    if (engines.length > 2) {
+      const removedId = engines[idx].id;
+      const n = [...engines];
+      n.splice(idx, 1);
+      setEngines(n);
+      if (removedId) setDisabledEngineIds(prev => prev.filter(id => id !== removedId));
+    }
+  };
+  const addEngine = () => {
+    setEngines([
+      ...engines,
+      {
+        id: crypto.randomUUID(),
+        name: `Engine ${engines.length + 1}`,
+        path: "mock-engine",
+        options: [],
+        args: [],
+        working_directory: ""
+      }
+    ]);
+  };
   const removeEngine = (idx: number) => { if (engines.length > 2) { const n = [...engines]; n.splice(idx, 1); setEngines(n); } };
   const updateEnginePath = (idx: number, path: string) => { const n = [...engines]; n[idx].path = path; setEngines(n); };
   const updateEngineName = (idx: number, name: string) => { const n = [...engines]; n[idx].name = name; setEngines(n); };
   const updateEngineFlag = (idx: number, code: string) => { const n = [...engines]; n[idx].country_code = code; setEngines(n); };
+  const updateEngineWorkingDirectory = (idx: number, workingDirectory: string) => {
+    const n = [...engines];
+    n[idx].working_directory = workingDirectory;
+    setEngines(n);
+  };
+
+  const updateEngineArgs = (idx: number, args: string[]) => {
+    const n = [...engines];
+    n[idx].args = args;
+    setEngines(n);
+  };
 
   const updateEngineOption = (engIdx: number, optName: string, optVal: string) => {
       const n = [...engines]; const opts = n[engIdx].options;
@@ -337,18 +609,39 @@ function App() {
       if (existing >= 0) opts[existing][1] = optVal; else opts.push([optName, optVal]);
       setEngines(n);
   };
+  const updateEngineOptionAt = (engIdx: number, optIdx: number, key: string, val: string) => {
+      const n = [...engines];
+      n[engIdx].options[optIdx] = [key, val];
+      setEngines(n);
+  };
   const removeEngineOption = (engIdx: number, optName: string) => {
       const n = [...engines]; n[engIdx].options = n[engIdx].options.filter(o => o[0] !== optName);
       setEngines(n);
   };
+  const removeEngineOptionAt = (engIdx: number, optIdx: number) => {
+      const n = [...engines];
+      n[engIdx].options.splice(optIdx, 1);
+      setEngines(n);
+  };
 
   const selectFileForEngine = async (idx: number) => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
+    const selected = await openDialog({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
     if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
   };
   const selectOpeningFile = async () => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Openings', extensions: ['epd', 'pgn'] }] });
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Openings', extensions: ['epd', 'pgn', 'fen', 'txt'] }]
+    });
     if (selected && typeof selected === 'string') setOpeningFile(selected);
+  };
+  const selectPgnPath = async () => {
+    const selected = await save({ filters: [{ name: 'PGN', extensions: ['pgn'] }] });
+    if (selected) setPgnPath(selected);
+  };
+  const revealPgnPath = async () => {
+    const target = pgnPath.trim() || resolvedPgnPath || defaultPgnPath;
+    if (target) await openPath(target);
   };
 
   const handleGameSelect = (id: number) => {
@@ -372,7 +665,7 @@ function App() {
   const savePreset = async () => {
       const preset = {
           tournamentMode, engines: engines.map(e => e.id), gamesCount, concurrency, swapSides,
-          openingFen, openingFile, openingMode, variant, eventName,
+          openingFen, openingFile, openingMode, openingOrder, variant, eventName,
           timeControl: { baseH, baseM, baseS, incH, incM, incS }
       };
       const path = await save({ filters: [{ name: 'JSON', extensions: ['json'] }] });
@@ -383,7 +676,7 @@ function App() {
   };
 
   const loadPreset = async () => {
-      const selected = await open({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
+      const selected = await openDialog({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
       if (selected) {
            alert("Load preset logic ready. Requires FS access to read file content.");
       }
@@ -404,6 +697,18 @@ function App() {
 
   return (
     <div className="h-screen w-screen bg-gray-900 text-white flex overflow-hidden text-lg">
+      {showResumePrompt && savedTournament && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="bg-gray-800 p-6 rounded-lg w-96 border border-gray-600 shadow-2xl">
+            <h2 className="text-xl font-bold mb-2 text-blue-300">Resume Tournament?</h2>
+            <p className="text-sm text-gray-300 mb-4">An in-progress tournament was found. Would you like to resume or discard it?</p>
+            <div className="flex gap-2">
+              <button className="flex-1 bg-green-600 px-4 py-2 rounded font-bold hover:bg-green-500" onClick={resumeMatch}>Resume</button>
+              <button className="flex-1 bg-red-600 px-4 py-2 rounded font-bold hover:bg-red-500" onClick={discardSavedTournament}>Discard</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Engine Manager Modal */}
       {showEngineManager && (
           <EngineManager
@@ -464,6 +769,21 @@ function App() {
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
             {activeTab === 'settings' ? (
                 <>
+                    {draftRestoredAt && (
+                        <div className="rounded border border-blue-600 bg-blue-900/40 px-3 py-2 text-xs text-blue-100">
+                            <span className="font-semibold">Draft restored:</span> Last saved {new Date(draftRestoredAt).toLocaleString()}.
+                        </div>
+                    )}
+                    {matchRunning && (
+                        <div className="rounded border border-amber-500/70 bg-amber-900/30 px-3 py-2 text-xs text-amber-100">
+                            <span className="font-semibold">Active tournament:</span> Changes here are saved as a draft and won’t affect the running event.
+                        </div>
+                    )}
+                    {!matchRunning && activeTournamentConfig && (
+                        <div className="rounded border border-gray-600 bg-gray-800/70 px-3 py-2 text-xs text-gray-200">
+                            <span className="font-semibold">Active tournament stored:</span> Draft edits stay separate until a new event starts.
+                        </div>
+                    )}
                     {/* Presets & DB */}
                     <div className="flex gap-2 mb-2">
                          <button onClick={savePreset} className="flex-1 bg-gray-700 p-2 rounded text-xs flex items-center justify-center gap-1 hover:bg-gray-600"><Save size={14}/> Save Preset</button>
@@ -486,6 +806,17 @@ function App() {
                          <label className="text-sm font-semibold text-gray-400 uppercase">Event Name</label>
                          <input className="bg-gray-700 p-2 rounded w-full text-sm" value={eventName} onChange={(e) => setEventName(e.target.value)} />
                     </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-gray-400 uppercase">PGN Save Path</label>
+                        <div className="flex gap-2">
+                            <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Use default tournament.pgn" value={pgnPath} onChange={(e) => setPgnPath(e.target.value)} />
+                            <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500 text-xs" onClick={selectPgnPath}>Browse</button>
+                            <button className="bg-gray-700 px-3 py-1 rounded hover:bg-gray-600 text-xs" onClick={revealPgnPath} disabled={!pgnPath.trim() && !defaultPgnPath && !resolvedPgnPath}>Reveal in File Explorer</button>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                            Default: {defaultPgnPath || "tournament.pgn"}
+                        </p>
+                    </div>
 
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
@@ -494,7 +825,11 @@ function App() {
                         </div>
                         <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
                             {engines.map((eng, idx) => (
-                                <div key={idx} className="bg-gray-700 p-2 rounded flex flex-col gap-1 relative border border-gray-600">
+                                <div
+                                  key={idx}
+                                  className={`bg-gray-700 p-2 rounded flex flex-col gap-1 relative border ${selectedEngineIdx === idx ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-600'}`}
+                                  onClick={() => setSelectedEngineIdx(idx)}
+                                >
                                     <div className="flex justify-between items-center gap-2">
                                         <div className="flex items-center gap-1 w-full">
                                             <Flag code={eng.country_code} />
@@ -512,6 +847,109 @@ function App() {
                                 </div>
                             ))}
                         </div>
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-gray-400 uppercase">Engine Settings</label>
+                        <select
+                          className="bg-gray-700 p-2 rounded w-full text-sm"
+                          value={selectedEngineIdx}
+                          onChange={(e) => setSelectedEngineIdx(parseInt(e.target.value, 10))}
+                        >
+                          {engines.map((eng, idx) => (
+                            <option key={eng.id ?? idx} value={idx}>{eng.name}</option>
+                          ))}
+                        </select>
+                        {engines[selectedEngineIdx] && (
+                          <div className="bg-gray-800 border border-gray-700 rounded p-3 space-y-3">
+                            <div className="space-y-1">
+                              <label className="text-xs uppercase text-gray-400">Working Directory</label>
+                              <input
+                                className="bg-gray-700 p-2 rounded w-full text-xs"
+                                placeholder="Working Directory"
+                                value={engines[selectedEngineIdx].working_directory || ""}
+                                onChange={(e) => updateEngineWorkingDirectory(selectedEngineIdx, e.target.value)}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs uppercase text-gray-400">Args</label>
+                                <button
+                                  className="bg-green-600 px-2 py-0.5 rounded text-xs hover:bg-green-500"
+                                  onClick={() => updateEngineArgs(selectedEngineIdx, [...(engines[selectedEngineIdx].args || []), ""])}
+                                >
+                                  + Add Arg
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {(engines[selectedEngineIdx].args || []).map((arg, argIdx) => (
+                                  <div key={`${selectedEngineIdx}-arg-${argIdx}`} className="flex gap-2 items-center">
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-full text-xs"
+                                      placeholder="Argument"
+                                      value={arg}
+                                      onChange={(e) => {
+                                        const nextArgs = [...(engines[selectedEngineIdx].args || [])];
+                                        nextArgs[argIdx] = e.target.value;
+                                        updateEngineArgs(selectedEngineIdx, nextArgs);
+                                      }}
+                                    />
+                                    <button
+                                      className="text-red-400 hover:text-red-300"
+                                      onClick={() => {
+                                        const nextArgs = [...(engines[selectedEngineIdx].args || [])];
+                                        nextArgs.splice(argIdx, 1);
+                                        updateEngineArgs(selectedEngineIdx, nextArgs);
+                                      }}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                                {(engines[selectedEngineIdx].args || []).length === 0 && (
+                                  <div className="text-xs text-gray-500">No args configured.</div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs uppercase text-gray-400">UCI Options</label>
+                                <button
+                                  className="bg-green-600 px-2 py-0.5 rounded text-xs hover:bg-green-500"
+                                  onClick={() => updateEngineOptionAt(selectedEngineIdx, engines[selectedEngineIdx].options.length, "", "")}
+                                >
+                                  + Add Option
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {engines[selectedEngineIdx].options.map(([key, val], optIdx) => (
+                                  <div key={`${selectedEngineIdx}-opt-${optIdx}`} className="flex gap-2 items-center">
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-1/2 text-xs"
+                                      placeholder="Name"
+                                      value={key}
+                                      onChange={(e) => updateEngineOptionAt(selectedEngineIdx, optIdx, e.target.value, val)}
+                                    />
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-1/2 text-xs"
+                                      placeholder="Value"
+                                      value={val}
+                                      onChange={(e) => updateEngineOptionAt(selectedEngineIdx, optIdx, key, e.target.value)}
+                                    />
+                                    <button
+                                      className="text-red-400 hover:text-red-300"
+                                      onClick={() => removeEngineOptionAt(selectedEngineIdx, optIdx)}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                                {engines[selectedEngineIdx].options.length === 0 && (
+                                  <div className="text-xs text-gray-500">No options configured.</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                     </div>
                     {/* Time & Options */}
                     <div className="space-y-2">
@@ -550,9 +988,22 @@ function App() {
                         {openingMode === 'fen' ? (
                             <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="FEN..." value={openingFen} onChange={(e) => setOpeningFen(e.target.value)} />
                         ) : (
-                            <div className="flex gap-2">
-                                <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Select file..." value={openingFile} readOnly />
-                                <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500" onClick={selectOpeningFile}>...</button>
+                            <div className="flex flex-col gap-2">
+                                <div className="flex gap-2">
+                                    <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Select file..." value={openingFile} readOnly />
+                                    <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500" onClick={selectOpeningFile}>...</button>
+                                </div>
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="text-gray-500">Order</span>
+                                    <select
+                                        className="bg-gray-700 p-1 rounded text-sm"
+                                        value={openingOrder}
+                                        onChange={(e) => setOpeningOrder(e.target.value as 'sequential' | 'random')}
+                                    >
+                                        <option value="sequential">Sequential</option>
+                                        <option value="random">Random</option>
+                                    </select>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -583,6 +1034,30 @@ function App() {
                             </div>
                         </div>
                     )}
+                    <div className="bg-gray-800/60 border border-gray-700 rounded p-2">
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="text-sm font-semibold text-gray-400 uppercase">Engine Toggles</label>
+                            <span className="text-xs text-gray-500">{disabledEngineIds.length} Disabled</span>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            {engines.map((eng) => {
+                                const isDisabled = !!eng.id && disabledEngineIds.includes(eng.id);
+                                const isToggleDisabled = !eng.id;
+                                return (
+                                    <div key={eng.id || eng.name} className={`flex items-center justify-between gap-2 rounded px-2 py-1 border ${isDisabled ? "border-red-500/50 bg-red-900/20" : "border-gray-700 bg-gray-700/40"}`}>
+                                        <span className="text-xs font-semibold">{eng.name}</span>
+                                        <button
+                                            className={`text-xs px-2 py-0.5 rounded ${isToggleDisabled ? "bg-gray-600 text-gray-400 cursor-not-allowed" : isDisabled ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"}`}
+                                            onClick={() => toggleEngineDisabled(eng.id)}
+                                            disabled={isToggleDisabled}
+                                        >
+                                            {isDisabled ? "Disabled" : "Enabled"}
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
                     <div className="flex justify-between items-center mb-2"><label className="text-sm font-semibold text-gray-400 uppercase">Upcoming Games</label><span className="text-xs text-gray-500">{schedule.length} Total</span></div>
                     <div className="flex flex-col gap-2">
                         {schedule.map((game) => (
@@ -597,6 +1072,11 @@ function App() {
             )}
         </div>
         <div className="p-4 border-t border-gray-700 bg-gray-900 shrink-0">
+             {matchRunning && resolvedPgnPath && (
+                 <div className="mb-2 text-xs text-gray-400 break-all">
+                     PGN output: <span className="text-gray-200">{resolvedPgnPath}</span>
+                 </div>
+             )}
              {!matchRunning ? <button className="bg-green-600 p-3 rounded font-bold hover:bg-green-500 w-full flex items-center justify-center gap-2" onClick={startMatch}><Play size={20}/> START</button> : <button className="bg-red-600 p-3 rounded font-bold hover:bg-red-500 w-full" onClick={stopMatch}>STOP</button>}
         </div>
       </div>
