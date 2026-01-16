@@ -59,9 +59,10 @@ mod tests {
         let (game_tx, mut game_rx) = mpsc::channel(100);
         let (stats_tx, mut stats_rx) = mpsc::channel(100);
         let (tourney_stats_tx, mut tourney_stats_rx) = mpsc::channel(100);
-        let (schedule_update_tx, mut schedule_update_rx) = mpsc::channel(100);
+        let (schedule_update_tx, _schedule_update_rx) = mpsc::channel(100);
+        let (error_tx, _error_rx) = mpsc::channel(100);
 
-        let arbiter = crate::arbiter::Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx).await.expect("Failed to create arbiter");
+        let arbiter = crate::arbiter::Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx, error_tx).await.expect("Failed to create arbiter");
         let arbiter = Arc::new(arbiter);
 
         // Run match in background

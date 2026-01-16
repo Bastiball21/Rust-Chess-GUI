@@ -1,5 +1,5 @@
 use crate::uci::AsyncEngine;
-use crate::types::{TournamentConfig, TournamentMode, GameUpdate, EngineStats, ScheduledGame, TournamentResumeState};
+use crate::types::{TournamentConfig, TournamentMode, GameUpdate, EngineStats, ScheduledGame, TournamentError, TournamentResumeState};
 use crate::stats::TournamentStats;
 use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode, Outcome};
 use shakmaty::fen::Fen;
@@ -14,6 +14,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::task::JoinSet;
 use std::collections::HashSet;
 use std::path::Path;
+
+const ENGINE_SPAWN_FAILURE_LIMIT: u32 = 3;
 
 enum Board {
     Standard(Chess),
@@ -41,6 +43,7 @@ pub struct Arbiter {
     tourney_stats_tx: mpsc::Sender<TournamentStats>,
     pgn_tx: mpsc::Sender<String>,
     schedule_update_tx: mpsc::Sender<ScheduledGame>, // Channel for schedule updates
+    error_tx: mpsc::Sender<TournamentError>,
     should_stop: Arc<Mutex<bool>>,
     is_paused: Arc<Mutex<bool>>,
     openings: Vec<String>,
@@ -49,6 +52,9 @@ pub struct Arbiter {
     pairing_states: Arc<Mutex<Vec<PairingState>>>,
     remaining_rounds: Arc<Mutex<u32>>,
     next_game_id: Arc<Mutex<usize>>,
+    disabled_engine_ids: Arc<Mutex<HashSet<String>>>,
+    schedule_state: Arc<Mutex<Vec<ScheduledGame>>>,
+    engine_spawn_failures: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 #[derive(Clone)]
@@ -99,7 +105,8 @@ impl Arbiter {
         game_update_tx: mpsc::Sender<GameUpdate>,
         stats_tx: mpsc::Sender<EngineStats>,
         tourney_stats_tx: mpsc::Sender<TournamentStats>,
-        schedule_update_tx: mpsc::Sender<ScheduledGame> // Added
+        schedule_update_tx: mpsc::Sender<ScheduledGame>, // Added
+        error_tx: mpsc::Sender<TournamentError>
     ) -> anyhow::Result<Self> {
         let mut openings = Vec::new();
         if let Some(ref path) = config.opening_file {
@@ -143,6 +150,7 @@ impl Arbiter {
             tourney_stats_tx,
             pgn_tx,
             schedule_update_tx,
+            error_tx,
             should_stop: Arc::new(Mutex::new(false)),
             is_paused: Arc::new(Mutex::new(false)),
             openings,
@@ -153,6 +161,7 @@ impl Arbiter {
             next_game_id: Arc::new(Mutex::new(0)),
             disabled_engine_ids: Arc::new(Mutex::new(disabled_engine_ids)),
             schedule_state: Arc::new(Mutex::new(Vec::new())),
+            engine_spawn_failures: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -512,6 +521,9 @@ impl Arbiter {
                 let pgn_tx = self.pgn_tx.clone();
                 let schedule_update_tx = self.schedule_update_tx.clone();
                 let openings = self.openings.clone();
+                let error_tx = self.error_tx.clone();
+                let engine_spawn_failures = self.engine_spawn_failures.clone();
+                let disabled_engine_ids = self.disabled_engine_ids.clone();
 
                 join_set.spawn(async move {
                     let _permit = permit;
@@ -535,13 +547,80 @@ impl Arbiter {
                     let eng_a_config = &config.engines[game.idx_a];
                     let eng_b_config = &config.engines[game.idx_b];
 
+                    let eng_a_key = eng_a_config.id.clone().unwrap_or_else(|| eng_a_config.name.clone());
+                    let eng_b_key = eng_b_config.id.clone().unwrap_or_else(|| eng_b_config.name.clone());
+
                     let engine_a = match AsyncEngine::spawn(&eng_a_config.path).await {
-                        Ok(e) => e,
-                        Err(e) => { println!("Failed to spawn engine {}: {}", eng_a_config.name, e); return; }
+                        Ok(e) => {
+                            let mut failures = engine_spawn_failures.lock().await;
+                            failures.remove(&eng_a_key);
+                            e
+                        }
+                        Err(e) => {
+                            let failure_count = {
+                                let mut failures = engine_spawn_failures.lock().await;
+                                let entry = failures.entry(eng_a_key.clone()).or_insert(0);
+                                *entry += 1;
+                                *entry
+                            };
+                            let disabled = if failure_count >= ENGINE_SPAWN_FAILURE_LIMIT {
+                                if let Some(id) = eng_a_config.id.as_ref() {
+                                    let mut disabled_ids = disabled_engine_ids.lock().await;
+                                    disabled_ids.insert(id.clone());
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+                            let _ = error_tx.send(TournamentError {
+                                engine_id: eng_a_config.id.clone(),
+                                engine_name: eng_a_config.name.clone(),
+                                game_id: Some(game.id),
+                                message: format!("Failed to spawn engine {}: {}", eng_a_config.name, e),
+                                failure_count,
+                                disabled,
+                            }).await;
+                            println!("Failed to spawn engine {}: {}", eng_a_config.name, e);
+                            return;
+                        }
                     };
                     let engine_b = match AsyncEngine::spawn(&eng_b_config.path).await {
-                        Ok(e) => e,
-                        Err(e) => { println!("Failed to spawn engine {}: {}", eng_b_config.name, e); return; }
+                        Ok(e) => {
+                            let mut failures = engine_spawn_failures.lock().await;
+                            failures.remove(&eng_b_key);
+                            e
+                        }
+                        Err(e) => {
+                            let failure_count = {
+                                let mut failures = engine_spawn_failures.lock().await;
+                                let entry = failures.entry(eng_b_key.clone()).or_insert(0);
+                                *entry += 1;
+                                *entry
+                            };
+                            let disabled = if failure_count >= ENGINE_SPAWN_FAILURE_LIMIT {
+                                if let Some(id) = eng_b_config.id.as_ref() {
+                                    let mut disabled_ids = disabled_engine_ids.lock().await;
+                                    disabled_ids.insert(id.clone());
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+                            let _ = error_tx.send(TournamentError {
+                                engine_id: eng_b_config.id.clone(),
+                                engine_name: eng_b_config.name.clone(),
+                                game_id: Some(game.id),
+                                message: format!("Failed to spawn engine {}: {}", eng_b_config.name, e),
+                                failure_count,
+                                disabled,
+                            }).await;
+                            println!("Failed to spawn engine {}: {}", eng_b_config.name, e);
+                            return;
+                        }
                     };
 
                     {
