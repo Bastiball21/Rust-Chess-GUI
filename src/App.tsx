@@ -9,7 +9,8 @@ import EngineManager from "./components/EngineManager";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import { open as openPath } from "@tauri-apps/plugin-opener";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { Cog, Plus, Trash2, FolderOpen, Save, Database, Play, ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -127,6 +128,9 @@ function App() {
   const [openingOrder, setOpeningOrder] = useState<'sequential' | 'random'>('sequential');
   const [variant, setVariant] = useState("standard");
   const [eventName, setEventName] = useState("CCRL GUI Tournament");
+  const [pgnPath, setPgnPath] = useState("");
+  const [defaultPgnPath, setDefaultPgnPath] = useState("");
+  const [resolvedPgnPath, setResolvedPgnPath] = useState<string | null>(null);
 
   const [baseH, setBaseH] = useState(0);
   const [baseM, setBaseM] = useState(1);
@@ -190,6 +194,15 @@ function App() {
       }
     };
     initStore();
+  }, []);
+
+  useEffect(() => {
+    const loadDefaultPgnPath = async () => {
+      const appDir = await appDataDir();
+      const defaultPath = await join(appDir, "tournament.pgn");
+      setDefaultPgnPath(defaultPath);
+    };
+    loadDefaultPgnPath();
   }, []);
 
   useEffect(() => {
@@ -306,9 +319,9 @@ function App() {
     const baseMs = Math.round((baseH * 3600 + baseM * 60 + baseS) * 1000);
     const incMs = Math.round((incH * 3600 + incM * 60 + incS) * 1000);
 
-    // PGN path handling
-    const appDir = await appDataDir();
-    const pgnPath = await join(appDir, "tournament.pgn");
+    const trimmedPgnPath = pgnPath.trim();
+    const resolvedPath = trimmedPgnPath || defaultPgnPath || await join(await appDataDir(), "tournament.pgn");
+    setResolvedPgnPath(resolvedPath);
 
     const config = {
       mode: tournamentMode, engines: engines, time_control: { base_ms: baseMs, inc_ms: incMs },
@@ -317,7 +330,7 @@ function App() {
       opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
       opening_order: (openingMode === 'file' && openingFile) ? openingOrder : null,
       variant: variant,
-      pgn_path: pgnPath,
+      pgn_path: trimmedPgnPath || null,
       event_name: eventName
     };
     await invoke("start_match", { config });
@@ -378,15 +391,23 @@ function App() {
   };
 
   const selectFileForEngine = async (idx: number) => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
+    const selected = await openDialog({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
     if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
   };
   const selectOpeningFile = async () => {
-    const selected = await open({
+    const selected = await openDialog({
       multiple: false,
       filters: [{ name: 'Openings', extensions: ['epd', 'pgn', 'fen', 'txt'] }]
     });
     if (selected && typeof selected === 'string') setOpeningFile(selected);
+  };
+  const selectPgnPath = async () => {
+    const selected = await save({ filters: [{ name: 'PGN', extensions: ['pgn'] }] });
+    if (selected) setPgnPath(selected);
+  };
+  const revealPgnPath = async () => {
+    const target = pgnPath.trim() || resolvedPgnPath || defaultPgnPath;
+    if (target) await openPath(target);
   };
 
   const handleGameSelect = (id: number) => {
@@ -421,7 +442,7 @@ function App() {
   };
 
   const loadPreset = async () => {
-      const selected = await open({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
+      const selected = await openDialog({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
       if (selected) {
            alert("Load preset logic ready. Requires FS access to read file content.");
       }
@@ -523,6 +544,17 @@ function App() {
                     <div className="space-y-2">
                          <label className="text-sm font-semibold text-gray-400 uppercase">Event Name</label>
                          <input className="bg-gray-700 p-2 rounded w-full text-sm" value={eventName} onChange={(e) => setEventName(e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-gray-400 uppercase">PGN Save Path</label>
+                        <div className="flex gap-2">
+                            <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Use default tournament.pgn" value={pgnPath} onChange={(e) => setPgnPath(e.target.value)} />
+                            <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500 text-xs" onClick={selectPgnPath}>Browse</button>
+                            <button className="bg-gray-700 px-3 py-1 rounded hover:bg-gray-600 text-xs" onClick={revealPgnPath} disabled={!pgnPath.trim() && !defaultPgnPath && !resolvedPgnPath}>Reveal in File Explorer</button>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                            Default: {defaultPgnPath || "tournament.pgn"}
+                        </p>
                     </div>
 
                     <div className="space-y-2">
@@ -735,6 +767,11 @@ function App() {
             )}
         </div>
         <div className="p-4 border-t border-gray-700 bg-gray-900 shrink-0">
+             {matchRunning && resolvedPgnPath && (
+                 <div className="mb-2 text-xs text-gray-400 break-all">
+                     PGN output: <span className="text-gray-200">{resolvedPgnPath}</span>
+                 </div>
+             )}
              {!matchRunning ? <button className="bg-green-600 p-3 rounded font-bold hover:bg-green-500 w-full flex items-center justify-center gap-2" onClick={startMatch}><Play size={20}/> START</button> : <button className="bg-red-600 p-3 rounded font-bold hover:bg-red-500 w-full" onClick={stopMatch}>STOP</button>}
         </div>
       </div>
