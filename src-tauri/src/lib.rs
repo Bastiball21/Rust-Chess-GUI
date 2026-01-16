@@ -298,6 +298,26 @@ async fn set_disabled_engines(state: State<'_, AppState>, disabled_engine_ids: V
     Ok(())
 }
 
+#[tauri::command]
+async fn export_tournament_pgn(source_path: String, destination_path: String) -> Result<(), String> {
+    let source = Path::new(&source_path);
+    if !source.exists() {
+        return Err(format!("PGN file not found: {}", source_path));
+    }
+    if !source.is_file() {
+        return Err(format!("PGN path is not a file: {}", source_path));
+    }
+    if let Some(parent) = Path::new(&destination_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create destination directory {}: {}", parent.display(), e))?;
+        }
+    }
+    std::fs::copy(&source_path, &destination_path)
+        .map_err(|e| format!("Failed to write PGN to {}: {}", destination_path, e))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -326,7 +346,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match, update_remaining_rounds])
         .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match, set_disabled_engines])
-        .invoke_handler(tauri::generate_handler![start_match, get_saved_tournament, discard_saved_tournament, resume_match, stop_match, pause_match])
+        .invoke_handler(tauri::generate_handler![
+            start_match,
+            get_saved_tournament,
+            discard_saved_tournament,
+            resume_match,
+            stop_match,
+            pause_match,
+            export_tournament_pgn
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
