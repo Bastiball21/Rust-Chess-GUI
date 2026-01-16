@@ -737,6 +737,24 @@ function App() {
     if (target) await openPath(target);
   };
 
+  const exportTournamentPgn = async () => {
+    const sourcePath = activeTournamentConfig?.pgn_path || resolvedPgnPath || pgnPath.trim() || defaultPgnPath;
+    if (!sourcePath) {
+      alert("No PGN file is configured yet. Start a tournament or set a PGN path first.");
+      return;
+    }
+    const destinationPath = await save({ filters: [{ name: 'PGN', extensions: ['pgn'] }] });
+    if (!destinationPath) return;
+    try {
+      await invoke("export_tournament_pgn", { sourcePath, destinationPath });
+      alert("Tournament PGN exported successfully.");
+    } catch (err) {
+      console.error("Failed to export tournament PGN", err);
+      const message = err instanceof Error ? err.message : `${err}`;
+      alert(`Failed to export tournament PGN: ${message}`);
+    }
+  };
+
   const handleGameSelect = (id: number) => {
       setSelectedGameId(id); selectedGameIdRef.current = id;
       const state = gameStates.current[id];
@@ -1124,6 +1142,15 @@ function App() {
                 </>
             ) : (
                 <div className="space-y-2">
+                    <div className="bg-gray-800/70 border border-gray-700 rounded p-2 flex items-center justify-between gap-2">
+                        <span className="text-xs text-gray-400">Tournament PGN</span>
+                        <button
+                            className="bg-blue-600 px-3 py-1 rounded text-xs font-bold hover:bg-blue-500"
+                            onClick={exportTournamentPgn}
+                        >
+                            Export Tournament PGN
+                        </button>
+                    </div>
                     {matchRunning && (
                         <div className="bg-gray-800/70 border border-gray-700 rounded p-2 flex flex-col gap-2">
                             <label className="text-sm font-semibold text-gray-400 uppercase">Remaining Rounds</label>
