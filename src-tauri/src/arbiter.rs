@@ -10,6 +10,8 @@ use tokio::sync::Mutex;
 use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
 use std::io::BufRead;
+use std::collections::{HashMap, HashSet, VecDeque};
+use tokio::task::JoinSet;
 
 enum Board {
     Standard(Chess),
@@ -41,9 +43,53 @@ pub struct Arbiter {
     is_paused: Arc<Mutex<bool>>,
     openings: Vec<String>,
     tourney_stats: Arc<Mutex<TournamentStats>>,
+    schedule_queue: Arc<Mutex<VecDeque<ScheduleItem>>>,
+    pairing_states: Arc<Mutex<Vec<PairingState>>>,
+    remaining_rounds: Arc<Mutex<u32>>,
+    next_game_id: Arc<Mutex<usize>>,
+}
+
+#[derive(Clone)]
+struct ScheduleItem {
+    id: usize,
+    idx_a: usize,
+    idx_b: usize,
+    game_idx: u32,
+    white_name: String,
+    black_name: String,
+}
+
+#[derive(Clone)]
+struct PairingState {
+    idx_a: usize,
+    idx_b: usize,
+    next_game_idx: u32,
 }
 
 impl Arbiter {
+    fn generate_pairings(config: &TournamentConfig) -> Vec<(usize, usize)> {
+        let n = config.engines.len();
+        let mut pairings = Vec::new();
+        match config.mode {
+            TournamentMode::Match => {
+                if n >= 2 { pairings.push((0, 1)); }
+            },
+            TournamentMode::Gauntlet => {
+                if n >= 2 {
+                    for i in 1..n { pairings.push((0, i)); }
+                }
+            },
+            TournamentMode::RoundRobin => {
+                for i in 0..n {
+                    for j in i+1..n {
+                        pairings.push((i, j));
+                    }
+                }
+            }
+        }
+        pairings
+    }
+
     pub async fn new(
         config: TournamentConfig,
         game_update_tx: mpsc::Sender<GameUpdate>,
@@ -76,6 +122,14 @@ impl Arbiter {
              }
         });
 
+        let pairings = Self::generate_pairings(&config);
+        let pairing_states = pairings.iter().map(|(idx_a, idx_b)| PairingState {
+            idx_a: *idx_a,
+            idx_b: *idx_b,
+            next_game_idx: 0,
+        }).collect();
+        let remaining_rounds = config.games_count.max(1);
+
         Ok(Self {
             active_engines: Arc::new(Mutex::new(Vec::new())),
             config,
@@ -88,237 +142,317 @@ impl Arbiter {
             is_paused: Arc::new(Mutex::new(false)),
             openings,
             tourney_stats: Arc::new(Mutex::new(TournamentStats::default())),
+            schedule_queue: Arc::new(Mutex::new(VecDeque::new())),
+            pairing_states: Arc::new(Mutex::new(pairing_states)),
+            remaining_rounds: Arc::new(Mutex::new(remaining_rounds)),
+            next_game_id: Arc::new(Mutex::new(0)),
         })
     }
 
     pub async fn set_paused(&self, paused: bool) { *self.is_paused.lock().await = paused; }
 
-    fn generate_pairings(&self) -> Vec<(usize, usize)> {
-        let n = self.config.engines.len();
-        let mut pairings = Vec::new();
-        match self.config.mode {
-            TournamentMode::Match => {
-                if n >= 2 { pairings.push((0, 1)); }
-            },
-            TournamentMode::Gauntlet => {
-                if n >= 2 {
-                    for i in 1..n { pairings.push((0, i)); }
-                }
-            },
-            TournamentMode::RoundRobin => {
-                for i in 0..n {
-                    for j in i+1..n {
-                        pairings.push((i, j));
+    fn make_schedule_item(&self, idx_a: usize, idx_b: usize, game_idx: u32, game_id: usize) -> ScheduleItem {
+        let (white_idx, black_idx) = if self.config.swap_sides && game_idx % 2 != 0 {
+            (idx_b, idx_a)
+        } else {
+            (idx_a, idx_b)
+        };
+        let white_name = self.config.engines[white_idx].name.clone();
+        let black_name = self.config.engines[black_idx].name.clone();
+
+        ScheduleItem {
+            id: game_id,
+            idx_a,
+            idx_b,
+            game_idx,
+            white_name,
+            black_name,
+        }
+    }
+
+    fn schedule_item_to_game(item: &ScheduleItem, state: &str, result: Option<String>) -> ScheduledGame {
+        ScheduledGame {
+            id: item.id,
+            white_name: item.white_name.clone(),
+            black_name: item.black_name.clone(),
+            state: state.to_string(),
+            result,
+        }
+    }
+
+    pub async fn update_remaining_rounds(&self, remaining_rounds: u32) -> anyhow::Result<()> {
+        *self.remaining_rounds.lock().await = remaining_rounds;
+
+        let mut pending_updates = Vec::new();
+        let mut removed_updates = Vec::new();
+
+        let mut queue = self.schedule_queue.lock().await;
+        let mut pairing_states = self.pairing_states.lock().await;
+
+        let mut pending_counts: HashMap<(usize, usize), usize> = HashMap::new();
+        for item in queue.iter() {
+            *pending_counts.entry((item.idx_a, item.idx_b)).or_insert(0) += 1;
+        }
+
+        let mut remove_needed: HashMap<(usize, usize), usize> = HashMap::new();
+        for state in pairing_states.iter() {
+            let key = (state.idx_a, state.idx_b);
+            let current = *pending_counts.get(&key).unwrap_or(&0);
+            if current > remaining_rounds as usize {
+                remove_needed.insert(key, current - remaining_rounds as usize);
+            }
+        }
+
+        if !remove_needed.is_empty() {
+            let queue_vec: Vec<ScheduleItem> = queue.drain(..).collect();
+            let mut remove_ids = HashSet::new();
+            for item in queue_vec.iter().rev() {
+                let key = (item.idx_a, item.idx_b);
+                if let Some(needed) = remove_needed.get_mut(&key) {
+                    if *needed > 0 {
+                        *needed -= 1;
+                        remove_ids.insert(item.id);
+                        removed_updates.push(Self::schedule_item_to_game(item, "Removed", None));
                     }
                 }
             }
+            let retained: VecDeque<ScheduleItem> = queue_vec.into_iter()
+                .filter(|item| !remove_ids.contains(&item.id))
+                .collect();
+            *queue = retained;
         }
-        pairings
+
+        pending_counts.clear();
+        for item in queue.iter() {
+            *pending_counts.entry((item.idx_a, item.idx_b)).or_insert(0) += 1;
+        }
+
+        for state in pairing_states.iter_mut() {
+            let key = (state.idx_a, state.idx_b);
+            let current = *pending_counts.get(&key).unwrap_or(&0);
+            if current < remaining_rounds as usize {
+                let add_count = remaining_rounds as usize - current;
+                for _ in 0..add_count {
+                    let game_id = {
+                        let mut id = self.next_game_id.lock().await;
+                        *id += 1;
+                        *id
+                    };
+                    let game_idx = state.next_game_idx;
+                    state.next_game_idx += 1;
+                    let item = self.make_schedule_item(state.idx_a, state.idx_b, game_idx, game_id);
+                    pending_updates.push(Self::schedule_item_to_game(&item, "Pending", None));
+                    queue.push_back(item);
+                }
+            }
+        }
+
+        drop(pairing_states);
+        drop(queue);
+
+        for update in removed_updates {
+            let _ = self.schedule_update_tx.send(update).await;
+        }
+        for update in pending_updates {
+            let _ = self.schedule_update_tx.send(update).await;
+        }
+
+        Ok(())
     }
 
     pub async fn run_tournament(&self) -> anyhow::Result<()> {
-        let pairings = self.generate_pairings();
-        let games_count = self.config.games_count.max(1);
-
         let concurrency = self.config.concurrency.unwrap_or(4).max(1) as usize;
         let semaphore = Arc::new(Semaphore::new(concurrency));
 
-        let mut tasks = Vec::new();
-        let mut game_tasks = Vec::new();
-        let mut schedule_list = Vec::new();
-
-        let mut game_id_counter = 0;
-        for (idx_a, idx_b) in pairings {
-            for i in 0..games_count {
-                // Determine names for schedule
-                let (white_idx, black_idx) = if self.config.swap_sides && i % 2 != 0 {
-                    (idx_b, idx_a)
-                } else {
-                    (idx_a, idx_b)
-                };
-                let white_name = self.config.engines[white_idx].name.clone();
-                let black_name = self.config.engines[black_idx].name.clone();
-
-                game_id_counter += 1;
-                let scheduled_game = ScheduledGame {
-                    id: game_id_counter,
-                    white_name: white_name.clone(),
-                    black_name: black_name.clone(),
-                    state: "Pending".to_string(),
-                    result: None,
-                };
-                schedule_list.push(scheduled_game.clone());
-
-                // Send initial pending state
-                let _ = self.schedule_update_tx.send(scheduled_game).await;
-
-                game_tasks.push((idx_a, idx_b, i, game_id_counter));
+        {
+            let mut queue = self.schedule_queue.lock().await;
+            queue.clear();
+        }
+        {
+            let mut pairing_states = self.pairing_states.lock().await;
+            for state in pairing_states.iter_mut() {
+                state.next_game_idx = 0;
             }
         }
+        {
+            let mut next_game_id = self.next_game_id.lock().await;
+            *next_game_id = 0;
+        }
+        let remaining_rounds = *self.remaining_rounds.lock().await;
+        self.update_remaining_rounds(remaining_rounds).await?;
 
-        // We could send the full list as a "batch" here, but for simplicity we rely on individual "Pending" events
-        // sent above. The frontend can accumulate them.
-        // Actually, individual events might arrive out of order or be slow.
-        // It's better if the frontend clears schedule on start.
+        let mut join_set = JoinSet::new();
 
-        for (idx_a, idx_b, game_idx, game_id) in game_tasks {
-             if *self.should_stop.lock().await { break; }
+        loop {
+            if *self.should_stop.lock().await {
+                break;
+            }
 
-             let permit = semaphore.clone().acquire_owned().await?;
+            while join_set.len() < concurrency {
+                let next_game = { self.schedule_queue.lock().await.pop_front() };
+                let Some(game) = next_game else { break };
+                let permit = semaphore.clone().acquire_owned().await?;
 
-             let config = self.config.clone();
-             let should_stop = self.should_stop.clone();
-             let is_paused = self.is_paused.clone();
-             let active_engines = self.active_engines.clone();
-             let game_update_tx = self.game_update_tx.clone();
-             let stats_tx = self.stats_tx.clone();
-             let tourney_stats_tx = self.tourney_stats_tx.clone();
-             let tourney_stats = self.tourney_stats.clone();
-             let pgn_tx = self.pgn_tx.clone();
-             let schedule_update_tx = self.schedule_update_tx.clone();
-             let openings = self.openings.clone();
+                let config = self.config.clone();
+                let should_stop = self.should_stop.clone();
+                let is_paused = self.is_paused.clone();
+                let active_engines = self.active_engines.clone();
+                let game_update_tx = self.game_update_tx.clone();
+                let stats_tx = self.stats_tx.clone();
+                let tourney_stats_tx = self.tourney_stats_tx.clone();
+                let tourney_stats = self.tourney_stats.clone();
+                let pgn_tx = self.pgn_tx.clone();
+                let schedule_update_tx = self.schedule_update_tx.clone();
+                let openings = self.openings.clone();
 
-             let task = tokio::spawn(async move {
-                let _permit = permit;
-                if *should_stop.lock().await { return; }
+                join_set.spawn(async move {
+                    let _permit = permit;
+                    if *should_stop.lock().await { return; }
 
-                let (white_engine_idx, black_engine_idx) = if config.swap_sides && game_idx % 2 != 0 {
-                    (idx_b, idx_a)
-                } else {
-                    (idx_a, idx_b)
-                };
+                    let (white_engine_idx, black_engine_idx) = if config.swap_sides && game.game_idx % 2 != 0 {
+                        (game.idx_b, game.idx_a)
+                    } else {
+                        (game.idx_a, game.idx_b)
+                    };
 
-                let white_name = config.engines[white_engine_idx].name.clone();
-                let black_name = config.engines[black_engine_idx].name.clone();
+                    // Notify Active
+                    let _ = schedule_update_tx.send(ScheduledGame {
+                        id: game.id,
+                        white_name: game.white_name.clone(),
+                        black_name: game.black_name.clone(),
+                        state: "Active".to_string(),
+                        result: None
+                    }).await;
 
-                // Notify Active
-                let _ = schedule_update_tx.send(ScheduledGame {
-                    id: game_id,
-                    white_name: white_name.clone(),
-                    black_name: black_name.clone(),
-                    state: "Active".to_string(),
-                    result: None
-                }).await;
+                    let eng_a_config = &config.engines[game.idx_a];
+                    let eng_b_config = &config.engines[game.idx_b];
 
-                let eng_a_config = &config.engines[idx_a];
-                let eng_b_config = &config.engines[idx_b];
+                    let engine_a = match AsyncEngine::spawn(&eng_a_config.path).await {
+                        Ok(e) => e,
+                        Err(e) => { println!("Failed to spawn engine {}: {}", eng_a_config.name, e); return; }
+                    };
+                    let engine_b = match AsyncEngine::spawn(&eng_b_config.path).await {
+                        Ok(e) => e,
+                        Err(e) => { println!("Failed to spawn engine {}: {}", eng_b_config.name, e); return; }
+                    };
 
-                let engine_a = match AsyncEngine::spawn(&eng_a_config.path).await {
-                    Ok(e) => e,
-                    Err(e) => { println!("Failed to spawn engine {}: {}", eng_a_config.name, e); return; }
-                };
-                let engine_b = match AsyncEngine::spawn(&eng_b_config.path).await {
-                    Ok(e) => e,
-                    Err(e) => { println!("Failed to spawn engine {}: {}", eng_b_config.name, e); return; }
-                };
+                    {
+                        let mut active = active_engines.lock().await;
+                        active.push(engine_a.clone());
+                        active.push(engine_b.clone());
+                    }
 
-                {
-                    let mut active = active_engines.lock().await;
-                    active.push(engine_a.clone());
-                    active.push(engine_b.clone());
-                }
+                    let mut a_rx = engine_a.stdout_broadcast.subscribe();
+                    let mut b_rx = engine_b.stdout_broadcast.subscribe();
+                    let stats_tx_a = stats_tx.clone();
+                    let stats_tx_b = stats_tx.clone();
+                    let idx_a_val = game.idx_a;
+                    let idx_b_val = game.idx_b;
 
-                let mut a_rx = engine_a.stdout_broadcast.subscribe();
-                let mut b_rx = engine_b.stdout_broadcast.subscribe();
-                let stats_tx_a = stats_tx.clone();
-                let stats_tx_b = stats_tx.clone();
-                let idx_a_val = idx_a;
-                let idx_b_val = idx_b;
+                    let stop_listen_a = should_stop.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            match a_rx.recv().await {
+                                Ok(line) => {
+                                    if *stop_listen_a.lock().await { break; }
+                                    if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_a_val, game.id) { let _ = stats_tx_a.send(stats).await; } }
+                                },
+                                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(broadcast::error::RecvError::Closed) => break,
+                            }
+                        }
+                    });
+                    let stop_listen_b = should_stop.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            match b_rx.recv().await {
+                                Ok(line) => {
+                                    if *stop_listen_b.lock().await { break; }
+                                    if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_b_val, game.id) { let _ = stats_tx_b.send(stats).await; } }
+                                },
+                                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(broadcast::error::RecvError::Closed) => break,
+                            }
+                        }
+                    });
 
-                let stop_listen_a = should_stop.clone();
-                tokio::spawn(async move {
-                    loop {
-                        match a_rx.recv().await {
-                            Ok(line) => {
-                                if *stop_listen_a.lock().await { break; }
-                                if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_a_val, game_id) { let _ = stats_tx_a.send(stats).await; } }
-                            },
-                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                            Err(broadcast::error::RecvError::Closed) => break,
+                    let (white_engine, black_engine, white_idx, black_idx) = if config.swap_sides && game.game_idx % 2 != 0 {
+                        (&engine_b, &engine_a, game.idx_b, game.idx_a)
+                    } else {
+                        (&engine_a, &engine_b, game.idx_a, game.idx_b)
+                    };
+
+                    let start_fen = if !openings.is_empty() {
+                        let idx = if config.swap_sides { (game.game_idx / 2) as usize } else { game.game_idx as usize };
+                        openings[idx % openings.len()].clone()
+                    } else if let Some(ref f) = config.opening_fen {
+                        if !f.trim().is_empty() { f.clone() } else { generate_start_fen(&config.variant) }
+                    } else {
+                        generate_start_fen(&config.variant)
+                    };
+
+                    let res = play_game_static(
+                        white_engine, black_engine, white_idx, black_idx, &start_fen,
+                        &config, &game_update_tx, &should_stop, &is_paused, game.id
+                    ).await;
+
+                    match res {
+                        Ok((result, moves_played)) => {
+                            // Notify Finished
+                            let _ = schedule_update_tx.send(ScheduledGame {
+                                id: game.id,
+                                white_name: game.white_name.clone(),
+                                black_name: game.black_name.clone(),
+                                state: "Finished".to_string(),
+                                result: Some(result.clone())
+                            }).await;
+
+                            let white_name_pgn = &config.engines[white_idx].name;
+                            let black_name_pgn = &config.engines[black_idx].name;
+                            let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
+                            let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen, event_name, game.id);
+                            let _ = pgn_tx.send(pgn).await;
+
+                            {
+                                let mut stats = tourney_stats.lock().await;
+                                let is_white_a = white_idx == 0;
+                                stats.update(&result, is_white_a);
+                                let _ = tourney_stats_tx.send(stats.clone()).await;
+                            }
+                        }
+                        Err(err) => {
+                            if err.to_string() != "stopped" {
+                                println!("Game {} failed: {}", game.id, err);
+                            }
+                            let _ = schedule_update_tx.send(ScheduledGame {
+                                id: game.id,
+                                white_name: game.white_name.clone(),
+                                black_name: game.black_name.clone(),
+                                state: "Aborted".to_string(),
+                                result: None
+                            }).await;
                         }
                     }
+
+                    let _ = engine_a.quit().await;
+                    let _ = engine_b.quit().await;
                 });
-                let stop_listen_b = should_stop.clone();
-                tokio::spawn(async move {
-                    loop {
-                        match b_rx.recv().await {
-                            Ok(line) => {
-                                if *stop_listen_b.lock().await { break; }
-                                if line.starts_with("info") { if let Some(stats) = parse_info_with_id(&line, idx_b_val, game_id) { let _ = stats_tx_b.send(stats).await; } }
-                            },
-                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                            Err(broadcast::error::RecvError::Closed) => break,
-                        }
-                    }
-                });
+            }
 
-                let (white_engine, black_engine, white_idx, black_idx) = if config.swap_sides && game_idx % 2 != 0 {
-                    (&engine_b, &engine_a, idx_b, idx_a)
-                } else {
-                    (&engine_a, &engine_b, idx_a, idx_b)
-                };
-
-                let start_fen = if !openings.is_empty() {
-                    let idx = if config.swap_sides { (game_idx / 2) as usize } else { game_idx as usize };
-                    openings[idx % openings.len()].clone()
-                } else if let Some(ref f) = config.opening_fen {
-                    if !f.trim().is_empty() { f.clone() } else { generate_start_fen(&config.variant) }
-                } else {
-                    generate_start_fen(&config.variant)
-                };
-
-                let res = play_game_static(
-                    white_engine, black_engine, white_idx, black_idx, &start_fen,
-        &config, &game_update_tx, &should_stop, &is_paused, game_id
-                ).await;
-
-                match res {
-                    Ok((result, moves_played)) => {
-                        // Notify Finished
-                        let _ = schedule_update_tx.send(ScheduledGame {
-                            id: game_id,
-                            white_name: white_name.clone(),
-                            black_name: black_name.clone(),
-                            state: "Finished".to_string(),
-                            result: Some(result.clone())
-                        }).await;
-
-                        let white_name_pgn = &config.engines[white_idx].name;
-                        let black_name_pgn = &config.engines[black_idx].name;
-                        let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
-                        let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen, event_name, game_id);
-                        let _ = pgn_tx.send(pgn).await;
-
-                        {
-                            let mut stats = tourney_stats.lock().await;
-                            let is_white_a = white_idx == 0;
-                            stats.update(&result, is_white_a);
-                            let _ = tourney_stats_tx.send(stats.clone()).await;
-                        }
-                    }
-                    Err(err) => {
-                        if err.to_string() != "stopped" {
-                            println!("Game {} failed: {}", game_id, err);
-                        }
-                        let _ = schedule_update_tx.send(ScheduledGame {
-                            id: game_id,
-                            white_name: white_name.clone(),
-                            black_name: black_name.clone(),
-                            state: "Aborted".to_string(),
-                            result: None
-                        }).await;
-                    }
+            if join_set.is_empty() {
+                let has_pending = { !self.schedule_queue.lock().await.is_empty() };
+                if !has_pending {
+                    break;
                 }
+                sleep(Duration::from_millis(100)).await;
+                continue;
+            }
 
-                let _ = engine_a.quit().await;
-                let _ = engine_b.quit().await;
-             });
-
-             tasks.push(task);
+            let _ = join_set.join_next().await;
         }
 
-        for task in tasks {
-            let _ = task.await;
+        if *self.should_stop.lock().await {
+            while join_set.join_next().await.is_some() {}
         }
 
         {

@@ -126,6 +126,7 @@ function App() {
   const [openingMode, setOpeningMode] = useState<'fen' | 'file'>('fen');
   const [variant, setVariant] = useState("standard");
   const [eventName, setEventName] = useState("CCRL GUI Tournament");
+  const [remainingRounds, setRemainingRounds] = useState(0);
 
   const [baseH, setBaseH] = useState(0);
   const [baseM, setBaseM] = useState(1);
@@ -179,6 +180,12 @@ function App() {
     store.set("engine_library", engineLibrary);
     store.save();
   }, [engines, engineLibrary, store]);
+
+  useEffect(() => {
+    if (!matchRunning) {
+      setRemainingRounds(gamesCount);
+    }
+  }, [gamesCount, matchRunning]);
 
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
@@ -245,6 +252,15 @@ function App() {
     const unlistenTourneyStats = listen("tournament-stats", (event: any) => setTournamentStats(event.payload));
     const unlistenSchedule = listen("schedule-update", (event: any) => {
         const update = event.payload as ScheduledGame;
+        if (update.state === "Removed") {
+            setSchedule(prev => prev.filter(game => game.id !== update.id));
+            if (selectedGameIdRef.current === update.id) {
+                selectedGameIdRef.current = null;
+                setSelectedGameId(null);
+                clearGameState();
+            }
+            return;
+        }
         setSchedule(prev => {
             const index = prev.findIndex(g => g.id === update.id);
             if (index !== -1) {
@@ -274,6 +290,7 @@ function App() {
     setIsPaused(false);
     setSchedule([]);
     setSelectedGameId(null);
+    setRemainingRounds(gamesCount);
     if (engines.length >= 2) {
        setActiveWhiteStats(prev => ({ ...prev, name: engines[0].name, country_code: engines[0].country_code || "" }));
        setActiveBlackStats(prev => ({ ...prev, name: engines[1].name, country_code: engines[1].country_code || "" }));
@@ -300,6 +317,13 @@ function App() {
 
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
   const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
+  const updateRemainingRounds = async () => {
+    const value = Math.max(0, Math.floor(remainingRounds));
+    setRemainingRounds(value);
+    if (matchRunning) {
+      await invoke("update_remaining_rounds", { remaining_rounds: value });
+    }
+  };
 
   const addEngine = () => { setEngines([...engines, { id: crypto.randomUUID(), name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]); };
   const removeEngine = (idx: number) => { if (engines.length > 2) { const n = [...engines]; n.splice(idx, 1); setEngines(n); } };
@@ -539,6 +563,26 @@ function App() {
                 </>
             ) : (
                 <div className="space-y-2">
+                    {matchRunning && (
+                        <div className="bg-gray-800/70 border border-gray-700 rounded p-2 flex flex-col gap-2">
+                            <label className="text-sm font-semibold text-gray-400 uppercase">Remaining Rounds</label>
+                            <div className="flex gap-2 items-center">
+                                <input
+                                    type="number"
+                                    min={0}
+                                    className="bg-gray-700 p-1 rounded w-24 text-sm text-center"
+                                    value={remainingRounds}
+                                    onChange={(e) => setRemainingRounds(parseInt(e.target.value) || 0)}
+                                />
+                                <button
+                                    className="bg-blue-600 px-3 py-1 rounded text-xs font-bold hover:bg-blue-500"
+                                    onClick={updateRemainingRounds}
+                                >
+                                    Update
+                                </button>
+                            </div>
+                        </div>
+                    )}
                     <div className="flex justify-between items-center mb-2"><label className="text-sm font-semibold text-gray-400 uppercase">Upcoming Games</label><span className="text-xs text-gray-500">{schedule.length} Total</span></div>
                     <div className="flex flex-col gap-2">
                         {schedule.map((game) => (

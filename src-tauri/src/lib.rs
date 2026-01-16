@@ -58,6 +58,15 @@ async fn pause_match(state: State<'_, AppState>, paused: bool) -> Result<(), Str
     Ok(())
 }
 
+#[tauri::command]
+async fn update_remaining_rounds(state: State<'_, AppState>, remaining_rounds: u32) -> Result<(), String> {
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    if let Some(arbiter) = maybe_arbiter {
+        arbiter.update_remaining_rounds(remaining_rounds).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -65,7 +74,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState { current_arbiter: Arc::new(Mutex::new(None)), })
-        .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match])
+        .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match, update_remaining_rounds])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
