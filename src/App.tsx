@@ -168,7 +168,7 @@ function App() {
   const [eventName, setEventName] = useState("CCRL GUI Tournament");
   const [remainingRounds, setRemainingRounds] = useState(0);
   const [pgnPath, setPgnPath] = useState("");
-  const [defaultPgnPath, setDefaultPgnPath] = useState("");
+  const [defaultPgnPath, setDefaultPgnPath] = useState<string | null>(null);
   const [resolvedPgnPath, setResolvedPgnPath] = useState<string | null>(null);
 
   const [baseH, setBaseH] = useState(0);
@@ -190,7 +190,6 @@ function App() {
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [savedTournament, setSavedTournament] = useState<TournamentResumeState | null>(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
-  const [defaultPgnPath, setDefaultPgnPath] = useState<string | null>(null);
 
   const selectedGameIdRef = useRef<number | null>(null);
   const gameStates = useRef<Record<number, GameStateData>>({});
@@ -310,6 +309,8 @@ function App() {
       setRemainingRounds(gamesCount);
     }
   }, [gamesCount, matchRunning]);
+
+  useEffect(() => {
     if (!store) return;
     const draft: TournamentDraft = {
       tournamentMode,
@@ -346,6 +347,8 @@ function App() {
     incS,
     store
   ]);
+
+  useEffect(() => {
     if (selectedEngineIdx >= engines.length) {
       setSelectedEngineIdx(Math.max(0, engines.length - 1));
     }
@@ -503,7 +506,7 @@ function App() {
       variant: variant,
       pgn_path: pgnPath,
       event_name: eventName,
-      disabled_engine_ids: disabledEngineIds
+      disabled_engine_ids: disabledEngineIds,
       resume_state_path: resumeStatePath,
       resume_from_state: false
     };
@@ -546,13 +549,14 @@ function App() {
     setShowResumePrompt(false);
   };
 
-  const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
   const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
   const updateRemainingRounds = async () => {
     const value = Math.max(0, Math.floor(remainingRounds));
     setRemainingRounds(value);
     if (matchRunning) {
       await invoke("update_remaining_rounds", { remaining_rounds: value });
+    }
+  };
   const toggleEngineDisabled = async (engineId?: string) => {
     if (!engineId) return;
     const nextIds = disabledEngineIds.includes(engineId)
@@ -564,7 +568,6 @@ function App() {
     }
   };
 
-  const addEngine = () => { setEngines([...engines, { id: crypto.randomUUID(), name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]); };
   const removeEngine = (idx: number) => {
     if (engines.length > 2) {
       const removedId = engines[idx].id;
@@ -587,7 +590,6 @@ function App() {
       }
     ]);
   };
-  const removeEngine = (idx: number) => { if (engines.length > 2) { const n = [...engines]; n.splice(idx, 1); setEngines(n); } };
   const updateEnginePath = (idx: number, path: string) => { const n = [...engines]; n[idx].path = path; setEngines(n); };
   const updateEngineName = (idx: number, name: string) => { const n = [...engines]; n[idx].name = name; setEngines(n); };
   const updateEngineFlag = (idx: number, code: string) => { const n = [...engines]; n[idx].country_code = code; setEngines(n); };
