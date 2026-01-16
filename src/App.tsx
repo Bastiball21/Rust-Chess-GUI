@@ -494,22 +494,27 @@ function App() {
     // PGN path handling
     const appDir = await appDataDir();
     const resolvedDefaultPgnPath = defaultPgnPath ?? await resolveDefaultPgnPath();
-    const pgnPath = resolvedDefaultPgnPath ?? await join(appDir, "tournament.pgn");
+    const resolvedPgnPathValue = pgnPath.trim() || resolvedDefaultPgnPath || await join(appDir, "tournament.pgn");
     const resumeStatePath = await join(appDir, "tournament_resume.json");
 
     const config: TournamentConfig = {
-      mode: tournamentMode, engines: engines, time_control: { base_ms: baseMs, inc_ms: incMs },
-      games_count: gamesCount, concurrency: concurrency, swap_sides: swapSides,
+      mode: tournamentMode,
+      engines: engines,
+      time_control: { base_ms: baseMs, inc_ms: incMs },
+      games_count: gamesCount,
+      concurrency: concurrency,
+      swap_sides: swapSides,
       opening_fen: (openingMode === 'fen' && openingFen) ? openingFen : null,
       opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
       opening_order: (openingMode === 'file' && openingFile) ? openingOrder : null,
       variant: variant,
-      pgn_path: pgnPath,
+      pgn_path: resolvedPgnPathValue,
       event_name: eventName,
       disabled_engine_ids: disabledEngineIds,
       resume_state_path: resumeStatePath,
       resume_from_state: false
     };
+    setResolvedPgnPath(resolvedPgnPathValue);
     setActiveTournamentConfig(config);
     if (store) {
       store.set("active_tournament", config);
