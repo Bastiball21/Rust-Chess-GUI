@@ -134,6 +134,10 @@ async fn update_remaining_rounds(state: State<'_, AppState>, remaining_rounds: u
     if let Some(arbiter) = maybe_arbiter {
         arbiter.update_remaining_rounds(remaining_rounds).await.map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_disabled_engines(state: State<'_, AppState>, disabled_engine_ids: Vec<String>) -> Result<(), String> {
     let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.set_disabled_engine_ids(disabled_engine_ids).await; }
@@ -147,6 +151,22 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState { current_arbiter: Arc::new(Mutex::new(None)), })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let state = window.state::<AppState>();
+                let maybe_arbiter = {
+                    let mut arbiter_lock = state.current_arbiter.lock().unwrap();
+                    let arbiter = arbiter_lock.clone();
+                    *arbiter_lock = None;
+                    arbiter
+                };
+                if let Some(arbiter) = maybe_arbiter {
+                    tauri::async_runtime::block_on(async move {
+                        arbiter.stop().await;
+                    });
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match, update_remaining_rounds])
         .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match, set_disabled_engines])
         .invoke_handler(tauri::generate_handler![start_match, get_saved_tournament, discard_saved_tournament, resume_match, stop_match, pause_match])
