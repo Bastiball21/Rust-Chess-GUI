@@ -9,7 +9,8 @@ import EngineManager from "./components/EngineManager";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import { open as openPath } from "@tauri-apps/plugin-opener";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { Cog, Plus, Trash2, FolderOpen, Save, Database, Play, ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -146,8 +147,12 @@ function App() {
   const [openingFen, setOpeningFen] = useState("");
   const [openingFile, setOpeningFile] = useState("");
   const [openingMode, setOpeningMode] = useState<'fen' | 'file'>('fen');
+  const [openingOrder, setOpeningOrder] = useState<'sequential' | 'random'>('sequential');
   const [variant, setVariant] = useState("standard");
   const [eventName, setEventName] = useState("CCRL GUI Tournament");
+  const [pgnPath, setPgnPath] = useState("");
+  const [defaultPgnPath, setDefaultPgnPath] = useState("");
+  const [resolvedPgnPath, setResolvedPgnPath] = useState<string | null>(null);
 
   const [baseH, setBaseH] = useState(0);
   const [baseM, setBaseM] = useState(1);
@@ -173,6 +178,7 @@ function App() {
 
   const [tournamentStats, setTournamentStats] = useState<any>(null);
   const [editingEngineIdx, setEditingEngineIdx] = useState<number | null>(null);
+  const [selectedEngineIdx, setSelectedEngineIdx] = useState(0);
 
   // Sync engine names/flags if changed
   useEffect(() => {
@@ -187,13 +193,30 @@ function App() {
   }, [engines, whiteEngineIdx, blackEngineIdx]);
 
   useEffect(() => {
+    const normalizeEngines = (list: EngineConfig[], namePrefix: string) => (
+      list.map((engine, idx) => ({
+        id: engine.id ?? crypto.randomUUID(),
+        name: engine.name ?? `${namePrefix} ${idx + 1}`,
+        path: engine.path ?? "",
+        options: Array.isArray(engine.options) ? engine.options : [],
+        country_code: engine.country_code,
+        args: Array.isArray(engine.args) ? engine.args : [],
+        working_directory: engine.working_directory ?? "",
+        protocol: engine.protocol
+      }))
+    );
+
     const initStore = async () => {
       const s = await load('settings.json');
       setStore(s);
       const savedEngines = await s.get("active_engines");
       const savedLibrary = await s.get("engine_library");
-      if (savedEngines) setEngines(savedEngines as EngineConfig[]);
-      if (savedLibrary) setEngineLibrary(savedLibrary as EngineConfig[]);
+      if (savedEngines) {
+        setEngines(normalizeEngines(savedEngines as EngineConfig[], "Engine"));
+      }
+      if (savedLibrary) {
+        setEngineLibrary(normalizeEngines(savedLibrary as EngineConfig[], "Library Engine"));
+      }
     };
     initStore();
   }, []);
@@ -235,6 +258,12 @@ function App() {
     store.set("engine_library", engineLibrary);
     store.save();
   }, [engines, engineLibrary, store]);
+
+  useEffect(() => {
+    if (selectedEngineIdx >= engines.length) {
+      setSelectedEngineIdx(Math.max(0, engines.length - 1));
+    }
+  }, [engines.length, selectedEngineIdx]);
 
   useEffect(() => {
     const unlistenUpdate = listen("game-update", (event: any) => {
@@ -374,6 +403,7 @@ function App() {
       games_count: gamesCount, concurrency: concurrency, swap_sides: swapSides,
       opening_fen: (openingMode === 'fen' && openingFen) ? openingFen : null,
       opening_file: (openingMode === 'file' && openingFile) ? openingFile : null,
+      opening_order: (openingMode === 'file' && openingFile) ? openingOrder : null,
       variant: variant,
       pgn_path: pgnPath,
       event_name: eventName,
@@ -408,11 +438,34 @@ function App() {
   const stopMatch = async () => { await invoke("stop_match"); setMatchRunning(false); };
   const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
 
-  const addEngine = () => { setEngines([...engines, { id: crypto.randomUUID(), name: `Engine ${engines.length + 1}`, path: "mock-engine", options: [] }]); };
+  const addEngine = () => {
+    setEngines([
+      ...engines,
+      {
+        id: crypto.randomUUID(),
+        name: `Engine ${engines.length + 1}`,
+        path: "mock-engine",
+        options: [],
+        args: [],
+        working_directory: ""
+      }
+    ]);
+  };
   const removeEngine = (idx: number) => { if (engines.length > 2) { const n = [...engines]; n.splice(idx, 1); setEngines(n); } };
   const updateEnginePath = (idx: number, path: string) => { const n = [...engines]; n[idx].path = path; setEngines(n); };
   const updateEngineName = (idx: number, name: string) => { const n = [...engines]; n[idx].name = name; setEngines(n); };
   const updateEngineFlag = (idx: number, code: string) => { const n = [...engines]; n[idx].country_code = code; setEngines(n); };
+  const updateEngineWorkingDirectory = (idx: number, workingDirectory: string) => {
+    const n = [...engines];
+    n[idx].working_directory = workingDirectory;
+    setEngines(n);
+  };
+
+  const updateEngineArgs = (idx: number, args: string[]) => {
+    const n = [...engines];
+    n[idx].args = args;
+    setEngines(n);
+  };
 
   const updateEngineOption = (engIdx: number, optName: string, optVal: string) => {
       const n = [...engines]; const opts = n[engIdx].options;
@@ -420,18 +473,39 @@ function App() {
       if (existing >= 0) opts[existing][1] = optVal; else opts.push([optName, optVal]);
       setEngines(n);
   };
+  const updateEngineOptionAt = (engIdx: number, optIdx: number, key: string, val: string) => {
+      const n = [...engines];
+      n[engIdx].options[optIdx] = [key, val];
+      setEngines(n);
+  };
   const removeEngineOption = (engIdx: number, optName: string) => {
       const n = [...engines]; n[engIdx].options = n[engIdx].options.filter(o => o[0] !== optName);
       setEngines(n);
   };
+  const removeEngineOptionAt = (engIdx: number, optIdx: number) => {
+      const n = [...engines];
+      n[engIdx].options.splice(optIdx, 1);
+      setEngines(n);
+  };
 
   const selectFileForEngine = async (idx: number) => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
+    const selected = await openDialog({ multiple: false, filters: [{ name: 'Executables', extensions: ['exe', ''] }] });
     if (selected && typeof selected === 'string') updateEnginePath(idx, selected);
   };
   const selectOpeningFile = async () => {
-    const selected = await open({ multiple: false, filters: [{ name: 'Openings', extensions: ['epd', 'pgn'] }] });
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Openings', extensions: ['epd', 'pgn', 'fen', 'txt'] }]
+    });
     if (selected && typeof selected === 'string') setOpeningFile(selected);
+  };
+  const selectPgnPath = async () => {
+    const selected = await save({ filters: [{ name: 'PGN', extensions: ['pgn'] }] });
+    if (selected) setPgnPath(selected);
+  };
+  const revealPgnPath = async () => {
+    const target = pgnPath.trim() || resolvedPgnPath || defaultPgnPath;
+    if (target) await openPath(target);
   };
 
   const handleGameSelect = (id: number) => {
@@ -455,7 +529,7 @@ function App() {
   const savePreset = async () => {
       const preset = {
           tournamentMode, engines: engines.map(e => e.id), gamesCount, concurrency, swapSides,
-          openingFen, openingFile, openingMode, variant, eventName,
+          openingFen, openingFile, openingMode, openingOrder, variant, eventName,
           timeControl: { baseH, baseM, baseS, incH, incM, incS }
       };
       const path = await save({ filters: [{ name: 'JSON', extensions: ['json'] }] });
@@ -466,7 +540,7 @@ function App() {
   };
 
   const loadPreset = async () => {
-      const selected = await open({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
+      const selected = await openDialog({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
       if (selected) {
            alert("Load preset logic ready. Requires FS access to read file content.");
       }
@@ -581,6 +655,17 @@ function App() {
                          <label className="text-sm font-semibold text-gray-400 uppercase">Event Name</label>
                          <input className="bg-gray-700 p-2 rounded w-full text-sm" value={eventName} onChange={(e) => setEventName(e.target.value)} />
                     </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-gray-400 uppercase">PGN Save Path</label>
+                        <div className="flex gap-2">
+                            <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Use default tournament.pgn" value={pgnPath} onChange={(e) => setPgnPath(e.target.value)} />
+                            <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500 text-xs" onClick={selectPgnPath}>Browse</button>
+                            <button className="bg-gray-700 px-3 py-1 rounded hover:bg-gray-600 text-xs" onClick={revealPgnPath} disabled={!pgnPath.trim() && !defaultPgnPath && !resolvedPgnPath}>Reveal in File Explorer</button>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                            Default: {defaultPgnPath || "tournament.pgn"}
+                        </p>
+                    </div>
 
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
@@ -589,7 +674,11 @@ function App() {
                         </div>
                         <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
                             {engines.map((eng, idx) => (
-                                <div key={idx} className="bg-gray-700 p-2 rounded flex flex-col gap-1 relative border border-gray-600">
+                                <div
+                                  key={idx}
+                                  className={`bg-gray-700 p-2 rounded flex flex-col gap-1 relative border ${selectedEngineIdx === idx ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-600'}`}
+                                  onClick={() => setSelectedEngineIdx(idx)}
+                                >
                                     <div className="flex justify-between items-center gap-2">
                                         <div className="flex items-center gap-1 w-full">
                                             <Flag code={eng.country_code} />
@@ -607,6 +696,109 @@ function App() {
                                 </div>
                             ))}
                         </div>
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-semibold text-gray-400 uppercase">Engine Settings</label>
+                        <select
+                          className="bg-gray-700 p-2 rounded w-full text-sm"
+                          value={selectedEngineIdx}
+                          onChange={(e) => setSelectedEngineIdx(parseInt(e.target.value, 10))}
+                        >
+                          {engines.map((eng, idx) => (
+                            <option key={eng.id ?? idx} value={idx}>{eng.name}</option>
+                          ))}
+                        </select>
+                        {engines[selectedEngineIdx] && (
+                          <div className="bg-gray-800 border border-gray-700 rounded p-3 space-y-3">
+                            <div className="space-y-1">
+                              <label className="text-xs uppercase text-gray-400">Working Directory</label>
+                              <input
+                                className="bg-gray-700 p-2 rounded w-full text-xs"
+                                placeholder="Working Directory"
+                                value={engines[selectedEngineIdx].working_directory || ""}
+                                onChange={(e) => updateEngineWorkingDirectory(selectedEngineIdx, e.target.value)}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs uppercase text-gray-400">Args</label>
+                                <button
+                                  className="bg-green-600 px-2 py-0.5 rounded text-xs hover:bg-green-500"
+                                  onClick={() => updateEngineArgs(selectedEngineIdx, [...(engines[selectedEngineIdx].args || []), ""])}
+                                >
+                                  + Add Arg
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {(engines[selectedEngineIdx].args || []).map((arg, argIdx) => (
+                                  <div key={`${selectedEngineIdx}-arg-${argIdx}`} className="flex gap-2 items-center">
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-full text-xs"
+                                      placeholder="Argument"
+                                      value={arg}
+                                      onChange={(e) => {
+                                        const nextArgs = [...(engines[selectedEngineIdx].args || [])];
+                                        nextArgs[argIdx] = e.target.value;
+                                        updateEngineArgs(selectedEngineIdx, nextArgs);
+                                      }}
+                                    />
+                                    <button
+                                      className="text-red-400 hover:text-red-300"
+                                      onClick={() => {
+                                        const nextArgs = [...(engines[selectedEngineIdx].args || [])];
+                                        nextArgs.splice(argIdx, 1);
+                                        updateEngineArgs(selectedEngineIdx, nextArgs);
+                                      }}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                                {(engines[selectedEngineIdx].args || []).length === 0 && (
+                                  <div className="text-xs text-gray-500">No args configured.</div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs uppercase text-gray-400">UCI Options</label>
+                                <button
+                                  className="bg-green-600 px-2 py-0.5 rounded text-xs hover:bg-green-500"
+                                  onClick={() => updateEngineOptionAt(selectedEngineIdx, engines[selectedEngineIdx].options.length, "", "")}
+                                >
+                                  + Add Option
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {engines[selectedEngineIdx].options.map(([key, val], optIdx) => (
+                                  <div key={`${selectedEngineIdx}-opt-${optIdx}`} className="flex gap-2 items-center">
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-1/2 text-xs"
+                                      placeholder="Name"
+                                      value={key}
+                                      onChange={(e) => updateEngineOptionAt(selectedEngineIdx, optIdx, e.target.value, val)}
+                                    />
+                                    <input
+                                      className="bg-gray-700 p-2 rounded w-1/2 text-xs"
+                                      placeholder="Value"
+                                      value={val}
+                                      onChange={(e) => updateEngineOptionAt(selectedEngineIdx, optIdx, key, e.target.value)}
+                                    />
+                                    <button
+                                      className="text-red-400 hover:text-red-300"
+                                      onClick={() => removeEngineOptionAt(selectedEngineIdx, optIdx)}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                                {engines[selectedEngineIdx].options.length === 0 && (
+                                  <div className="text-xs text-gray-500">No options configured.</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                     </div>
                     {/* Time & Options */}
                     <div className="space-y-2">
@@ -645,9 +837,22 @@ function App() {
                         {openingMode === 'fen' ? (
                             <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="FEN..." value={openingFen} onChange={(e) => setOpeningFen(e.target.value)} />
                         ) : (
-                            <div className="flex gap-2">
-                                <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Select file..." value={openingFile} readOnly />
-                                <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500" onClick={selectOpeningFile}>...</button>
+                            <div className="flex flex-col gap-2">
+                                <div className="flex gap-2">
+                                    <input className="bg-gray-700 p-2 rounded w-full text-sm" placeholder="Select file..." value={openingFile} readOnly />
+                                    <button className="bg-blue-600 px-3 py-1 rounded hover:bg-blue-500" onClick={selectOpeningFile}>...</button>
+                                </div>
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="text-gray-500">Order</span>
+                                    <select
+                                        className="bg-gray-700 p-1 rounded text-sm"
+                                        value={openingOrder}
+                                        onChange={(e) => setOpeningOrder(e.target.value as 'sequential' | 'random')}
+                                    >
+                                        <option value="sequential">Sequential</option>
+                                        <option value="random">Random</option>
+                                    </select>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -672,6 +877,11 @@ function App() {
             )}
         </div>
         <div className="p-4 border-t border-gray-700 bg-gray-900 shrink-0">
+             {matchRunning && resolvedPgnPath && (
+                 <div className="mb-2 text-xs text-gray-400 break-all">
+                     PGN output: <span className="text-gray-200">{resolvedPgnPath}</span>
+                 </div>
+             )}
              {!matchRunning ? <button className="bg-green-600 p-3 rounded font-bold hover:bg-green-500 w-full flex items-center justify-center gap-2" onClick={startMatch}><Play size={20}/> START</button> : <button className="bg-red-600 p-3 rounded font-bold hover:bg-red-500 w-full" onClick={stopMatch}>STOP</button>}
         </div>
       </div>

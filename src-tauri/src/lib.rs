@@ -21,7 +21,9 @@ fn resume_state_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-async fn start_match(app: AppHandle, state: State<'_, AppState>, config: TournamentConfig) -> Result<(), String> {
+async fn start_match(app: AppHandle, state: State<'_, AppState>, mut config: TournamentConfig) -> Result<(), String> {
+    let trimmed_path = config.pgn_path.as_deref().map(str::trim).filter(|path| !path.is_empty());
+    config.pgn_path = Some(trimmed_path.unwrap_or("tournament.pgn").to_string());
     let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     let (game_tx, mut game_rx) = mpsc::channel::<GameUpdate>(100);
