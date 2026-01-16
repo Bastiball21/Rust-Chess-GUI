@@ -239,6 +239,7 @@ function App() {
   const selectedGameIdRef = useRef<number | null>(null);
   const gameStates = useRef<Record<number, GameStateData>>({});
   const cleanupTimers = useRef<Record<number, number>>({});
+  const storeRef = useRef<any>(null);
 
   const [tournamentStats, setTournamentStats] = useState<any>(null);
   const [editingEngineIdx, setEditingEngineIdx] = useState<number | null>(null);
@@ -313,6 +314,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    storeRef.current = store;
+  }, [store]);
+
+  useEffect(() => {
     const checkSavedTournament = async () => {
       try {
         const saved = await invoke<TournamentResumeState | null>("get_saved_tournament");
@@ -341,6 +346,23 @@ function App() {
 
   useEffect(() => {
     resolveDefaultPgnPath();
+  }, []);
+
+  useEffect(() => {
+    const unlistenCritical = listen("critical-error", async (event: any) => {
+      console.error("Critical tournament error:", event.payload);
+      setMatchRunning(false);
+      setActiveTournamentConfig(null);
+      const currentStore = storeRef.current;
+      if (currentStore) {
+        await currentStore.delete("active_tournament");
+        currentStore.save();
+      }
+    });
+
+    return () => {
+      unlistenCritical.then((f) => f());
+    };
   }, []);
 
   useEffect(() => {
