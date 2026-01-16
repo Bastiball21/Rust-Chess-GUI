@@ -60,6 +60,21 @@ interface EngineConfig {
   protocol?: string;
 }
 
+interface TournamentDraft {
+  tournamentMode: "Match" | "RoundRobin" | "Gauntlet";
+  engines: EngineConfig[];
+  gamesCount: number;
+  concurrency: number;
+  swapSides: boolean;
+  openingFen: string;
+  openingFile: string;
+  openingMode: "fen" | "file";
+  variant: string;
+  eventName: string;
+  timeControl: { baseH: number; baseM: number; baseS: number; incH: number; incM: number; incS: number };
+  savedAt: string;
+}
+
 interface ScheduledGame {
   id: number;
   white_name: string;
@@ -165,6 +180,8 @@ function App() {
   const [isPaused, setIsPaused] = useState(false);
   const [matchRunning, setMatchRunning] = useState(false);
   const [store, setStore] = useState<any>(null);
+  const [draftRestoredAt, setDraftRestoredAt] = useState<string | null>(null);
+  const [activeTournamentConfig, setActiveTournamentConfig] = useState<any>(null);
 
   const [activeTab, setActiveTab] = useState<'settings' | 'schedule'>('settings');
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
@@ -212,6 +229,33 @@ function App() {
       setStore(s);
       const savedEngines = await s.get("active_engines");
       const savedLibrary = await s.get("engine_library");
+      const savedDraft = await s.get("tournament_draft");
+      const savedActiveTournament = await s.get("active_tournament");
+      if (savedEngines) setEngines(savedEngines as EngineConfig[]);
+      if (savedLibrary) setEngineLibrary(savedLibrary as EngineConfig[]);
+      if (savedDraft) {
+        const draft = savedDraft as TournamentDraft;
+        setTournamentMode(draft.tournamentMode ?? "Match");
+        setGamesCount(draft.gamesCount ?? 10);
+        setConcurrency(draft.concurrency ?? 4);
+        setSwapSides(draft.swapSides ?? true);
+        setOpeningFen(draft.openingFen ?? "");
+        setOpeningFile(draft.openingFile ?? "");
+        setOpeningMode(draft.openingMode ?? "fen");
+        setVariant(draft.variant ?? "standard");
+        setEventName(draft.eventName ?? "CCRL GUI Tournament");
+        if (draft.engines?.length) setEngines(draft.engines);
+        if (draft.timeControl) {
+          setBaseH(draft.timeControl.baseH ?? 0);
+          setBaseM(draft.timeControl.baseM ?? 1);
+          setBaseS(draft.timeControl.baseS ?? 0);
+          setIncH(draft.timeControl.incH ?? 0);
+          setIncM(draft.timeControl.incM ?? 0);
+          setIncS(draft.timeControl.incS ?? 1);
+        }
+        setDraftRestoredAt(draft.savedAt ?? new Date().toISOString());
+      }
+      if (savedActiveTournament) setActiveTournamentConfig(savedActiveTournament);
       if (savedEngines) {
         setEngines(normalizeEngines(savedEngines as EngineConfig[], "Engine"));
       }
@@ -261,6 +305,42 @@ function App() {
   }, [engines, engineLibrary, store]);
 
   useEffect(() => {
+    if (!store) return;
+    const draft: TournamentDraft = {
+      tournamentMode,
+      engines,
+      gamesCount,
+      concurrency,
+      swapSides,
+      openingFen,
+      openingFile,
+      openingMode,
+      variant,
+      eventName,
+      timeControl: { baseH, baseM, baseS, incH, incM, incS },
+      savedAt: new Date().toISOString()
+    };
+    store.set("tournament_draft", draft);
+    store.save();
+  }, [
+    tournamentMode,
+    engines,
+    gamesCount,
+    concurrency,
+    swapSides,
+    openingFen,
+    openingFile,
+    openingMode,
+    variant,
+    eventName,
+    baseH,
+    baseM,
+    baseS,
+    incH,
+    incM,
+    incS,
+    store
+  ]);
     if (selectedEngineIdx >= engines.length) {
       setSelectedEngineIdx(Math.max(0, engines.length - 1));
     }
@@ -412,10 +492,24 @@ function App() {
       resume_state_path: resumeStatePath,
       resume_from_state: false
     };
+    setActiveTournamentConfig(config);
+    if (store) {
+      store.set("active_tournament", config);
+      store.save();
+    }
     await invoke("start_match", { config });
     setActiveTab('schedule');
   };
 
+  const stopMatch = async () => {
+    await invoke("stop_match");
+    setMatchRunning(false);
+    setActiveTournamentConfig(null);
+    if (store) {
+      await store.delete("active_tournament");
+      store.save();
+    }
+  };
   const resumeMatch = async () => {
     if (!savedTournament) return;
     gameStates.current = {};
@@ -655,6 +749,21 @@ function App() {
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
             {activeTab === 'settings' ? (
                 <>
+                    {draftRestoredAt && (
+                        <div className="rounded border border-blue-600 bg-blue-900/40 px-3 py-2 text-xs text-blue-100">
+                            <span className="font-semibold">Draft restored:</span> Last saved {new Date(draftRestoredAt).toLocaleString()}.
+                        </div>
+                    )}
+                    {matchRunning && (
+                        <div className="rounded border border-amber-500/70 bg-amber-900/30 px-3 py-2 text-xs text-amber-100">
+                            <span className="font-semibold">Active tournament:</span> Changes here are saved as a draft and won’t affect the running event.
+                        </div>
+                    )}
+                    {!matchRunning && activeTournamentConfig && (
+                        <div className="rounded border border-gray-600 bg-gray-800/70 px-3 py-2 text-xs text-gray-200">
+                            <span className="font-semibold">Active tournament stored:</span> Draft edits stay separate until a new event starts.
+                        </div>
+                    )}
                     {/* Presets & DB */}
                     <div className="flex gap-2 mb-2">
                          <button onClick={savePreset} className="flex-1 bg-gray-700 p-2 rounded text-xs flex items-center justify-center gap-1 hover:bg-gray-600"><Save size={14}/> Save Preset</button>
