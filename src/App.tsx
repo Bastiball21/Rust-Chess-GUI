@@ -1228,7 +1228,9 @@ function App() {
                 <EnginePanel stats={activeWhiteStats} side="white" />
              </div>
              <div className="h-[40%] min-h-0 flex gap-2 shrink-0">
-                 <PvBoard pv={activeWhiteStats.pv} currentFen={fen} side="white" />
+                 <div className="w-32 h-32 shrink-0">
+                     <PvBoard pv={activeWhiteStats.pv} currentFen={fen} side="white" />
+                 </div>
                  <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 h-full ${logsExpanded ? "flex-1 min-w-[12rem]" : "w-full"}`}>
                      <div className="flex justify-between items-center bg-gray-800 px-2 py-1 cursor-pointer hover:bg-gray-700" onClick={() => setLogsExpanded(!logsExpanded)}>
                         <span className="text-sm uppercase font-bold text-gray-500">Engine Log</span>
@@ -1286,7 +1288,9 @@ function App() {
                 <EnginePanel stats={activeBlackStats} side="black" />
              </div>
              <div className="h-[40%] min-h-0 flex gap-2 shrink-0">
-                 <PvBoard pv={activeBlackStats.pv} currentFen={fen} side="black" />
+                 <div className="w-32 h-32 shrink-0">
+                     <PvBoard pv={activeBlackStats.pv} currentFen={fen} side="black" />
+                 </div>
                  <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 h-full ${logsExpanded ? "flex-1 min-w-[12rem]" : "w-full"}`}>
                      <div className="flex justify-between items-center bg-gray-800 px-2 py-1 cursor-pointer hover:bg-gray-700" onClick={() => setLogsExpanded(!logsExpanded)}>
                         <span className="text-sm uppercase font-bold text-gray-500">Engine Log</span>
