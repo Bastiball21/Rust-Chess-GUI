@@ -1224,10 +1224,12 @@ function App() {
         {/* Top Area: Board & Scoreboard - Expanded */}
         <div className="grid grid-cols-3 gap-4 h-[70vh] min-h-0">
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg overflow-hidden">
-             <EnginePanel stats={activeWhiteStats} side="white" />
-             <div className="flex-1 min-h-0 flex gap-2">
+             <div className="h-[60%] min-h-0">
+                <EnginePanel stats={activeWhiteStats} side="white" />
+             </div>
+             <div className="h-[40%] min-h-0 flex gap-2 shrink-0">
                  <PvBoard pv={activeWhiteStats.pv} currentFen={fen} side="white" />
-                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 h-full ${logsExpanded ? "flex-1 min-w-[12rem]" : "w-48"}`}>
+                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 h-full ${logsExpanded ? "flex-1 min-w-[12rem]" : "w-full"}`}>
                      <div className="flex justify-between items-center bg-gray-800 px-2 py-1 cursor-pointer hover:bg-gray-700" onClick={() => setLogsExpanded(!logsExpanded)}>
                         <span className="text-sm uppercase font-bold text-gray-500">Engine Log</span>
                         {logsExpanded ? <ChevronDown size={12} className="text-gray-400"/> : <ChevronRight size={12} className="text-gray-400"/>}
@@ -1256,18 +1258,36 @@ function App() {
                )}
              </div>
 
-             <div className="w-full flex justify-between items-end px-8 mb-2"><span className="text-gray-400 font-mono text-sm">BLACK</span><div className="flex items-center gap-2"><Flag code={activeBlackStats.country_code} /><span className="text-white font-bold text-2xl">{activeBlackStats.name}</span></div><span className="text-gray-400 font-mono text-sm">{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span></div>
+             <div className="w-full grid grid-cols-[auto_1fr_auto] gap-4 items-end px-8 mb-2">
+                 <span className="text-gray-400 font-mono text-sm text-left">BLACK</span>
+                 <div className="flex items-center justify-center gap-2 overflow-hidden px-2">
+                    <Flag code={activeBlackStats.country_code} />
+                    <span className="text-white font-bold text-xl truncate">{activeBlackStats.name}</span>
+                 </div>
+                 <span className="text-gray-400 font-mono text-sm text-right">{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
+             </div>
+
              <div className="w-full aspect-square max-h-[50vh]">
                  <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true }, drawable: { visible: true } }} shapes={pvShapes} />
              </div>
-             <div className="w-full flex justify-between items-start px-8 mt-2"><span className="text-gray-400 font-mono text-sm">WHITE</span><div className="flex items-center gap-2"><Flag code={activeWhiteStats.country_code} /><span className="text-white font-bold text-2xl">{activeWhiteStats.name}</span></div><span className="text-gray-400 font-mono text-sm">{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span></div>
+
+             <div className="w-full grid grid-cols-[auto_1fr_auto] gap-4 items-start px-8 mt-2">
+                 <span className="text-gray-400 font-mono text-sm text-left">WHITE</span>
+                 <div className="flex items-center justify-center gap-2 overflow-hidden px-2">
+                    <Flag code={activeWhiteStats.country_code} />
+                    <span className="text-white font-bold text-xl truncate">{activeWhiteStats.name}</span>
+                 </div>
+                 <span className="text-gray-400 font-mono text-sm text-right">{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span>
+             </div>
           </div>
 
           <div className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2 border border-gray-700 shadow-lg overflow-hidden">
-             <EnginePanel stats={activeBlackStats} side="black" />
-             <div className="flex-1 min-h-0 flex gap-2">
+             <div className="h-[60%] min-h-0">
+                <EnginePanel stats={activeBlackStats} side="black" />
+             </div>
+             <div className="h-[40%] min-h-0 flex gap-2 shrink-0">
                  <PvBoard pv={activeBlackStats.pv} currentFen={fen} side="black" />
-                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 h-full ${logsExpanded ? "flex-1 min-w-[12rem]" : "w-48"}`}>
+                 <div className={`flex flex-col bg-gray-900 rounded border border-gray-700 overflow-hidden transition-all duration-300 h-full ${logsExpanded ? "flex-1 min-w-[12rem]" : "w-full"}`}>
                      <div className="flex justify-between items-center bg-gray-800 px-2 py-1 cursor-pointer hover:bg-gray-700" onClick={() => setLogsExpanded(!logsExpanded)}>
                         <span className="text-sm uppercase font-bold text-gray-500">Engine Log</span>
                         {logsExpanded ? <ChevronDown size={12} className="text-gray-400"/> : <ChevronRight size={12} className="text-gray-400"/>}
