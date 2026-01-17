@@ -1250,15 +1250,17 @@ function App() {
                {matchResult ? <span className="text-yellow-400">{matchResult}</span> : tournamentStats ? <span>{`${tournamentStats.wins} - ${tournamentStats.losses} - ${tournamentStats.draws}`}</span> : null}
              </div>
 
-             <div className="w-full grid grid-cols-[auto_1fr_auto] gap-4 items-end px-8 mb-2">
+             <div className="w-full grid grid-cols-[auto_1fr] gap-4 items-end px-8 mb-2">
                  <span className="text-gray-400 font-mono text-sm text-left">BLACK</span>
-                 <div className="flex items-center justify-center gap-2 min-w-0 px-2">
-                    <Flag code={activeBlackStats.country_code} />
-                    <span className="text-white font-bold text-xl truncate text-center">{activeBlackStats.name}</span>
-                 </div>
-                 <div className="flex flex-col items-end text-right font-mono text-sm text-gray-400">
-                     <span>{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
-                     <span className="text-gray-500">{formatTime(activeBlackStats.time || 0)}</span>
+                 <div className="flex items-center justify-between gap-3 min-w-0 px-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Flag code={activeBlackStats.country_code} />
+                      <span className="text-white font-bold text-xl truncate text-center">{activeBlackStats.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3 font-mono text-sm text-gray-400 shrink-0">
+                      <span>{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
+                      <span className="text-gray-500">{formatTime(activeBlackStats.time || 0)}</span>
+                    </div>
                  </div>
              </div>
 
@@ -1266,15 +1268,17 @@ function App() {
                  <Board fen={fen} lastMove={lastMove} config={{ movable: { viewOnly: true }, drawable: { visible: true } }} shapes={pvShapes} />
              </div>
 
-             <div className="w-full grid grid-cols-[auto_1fr_auto] gap-4 items-start px-8 mt-2">
+             <div className="w-full grid grid-cols-[auto_1fr] gap-4 items-start px-8 mt-2">
                  <span className="text-gray-400 font-mono text-sm text-left">WHITE</span>
-                 <div className="flex items-center justify-center gap-2 min-w-0 px-2">
-                    <Flag code={activeWhiteStats.country_code} />
-                    <span className="text-white font-bold text-xl truncate text-center">{activeWhiteStats.name}</span>
-                 </div>
-                 <div className="flex flex-col items-end text-right font-mono text-sm text-gray-400">
-                     <span>{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span>
-                     <span className="text-gray-500">{formatTime(activeWhiteStats.time || 0)}</span>
+                 <div className="flex items-center justify-between gap-3 min-w-0 px-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Flag code={activeWhiteStats.country_code} />
+                      <span className="text-white font-bold text-xl truncate text-center">{activeWhiteStats.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3 font-mono text-sm text-gray-400 shrink-0">
+                      <span>{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span>
+                      <span className="text-gray-500">{formatTime(activeWhiteStats.time || 0)}</span>
+                    </div>
                  </div>
              </div>
           </div>

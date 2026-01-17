@@ -1,7 +1,6 @@
 import React from 'react';
 import { Settings } from 'lucide-react';
 import { Flag } from './Flag';
-import { formatTime } from '../utils/formatTime';
 
 interface EnginePanelProps {
     stats: {
@@ -54,10 +53,6 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, onSetting
                  <div className="flex justify-between bg-gray-900/50 p-1.5 rounded">
                      <span>NODES</span>
                      <span className="text-blue-400">{(stats.nodes ? (stats.nodes / 1000000).toFixed(2) + 'M' : '0')}</span>
-                 </div>
-                 <div className="flex justify-between bg-gray-900/50 p-1.5 rounded">
-                     <span>TIME</span>
-                     <span className={`font-bold ${isWhite ? "text-white" : "text-gray-300"}`}>{formatTime(stats.time || 0)}</span>
                  </div>
              </div>
 
