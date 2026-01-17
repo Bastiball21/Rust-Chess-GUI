@@ -16,6 +16,7 @@ pub mod arbiter;
 pub mod uci;
 pub mod types;
 pub mod stats;
+pub mod sprt;
 pub mod mock_engine;
 #[cfg(test)] mod test_integration;
 

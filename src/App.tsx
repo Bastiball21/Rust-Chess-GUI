@@ -1243,7 +1243,17 @@ function App() {
           <div className="flex flex-col gap-2 items-center justify-center bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-lg relative">
              <div className="text-4xl font-bold text-gray-200 mb-4 flex flex-col items-center">
                {matchResult ? <span className="text-yellow-400">{matchResult}</span> : <span>{tournamentStats ? `${tournamentStats.wins} - ${tournamentStats.losses} - ${tournamentStats.draws}` : "0 - 0 - 0"}</span>}
-               {tournamentStats && <span className="text-lg text-blue-400 mt-1">{tournamentStats.sprt_status}</span>}
+               {tournamentStats && (
+                   <div className="mt-2 text-center text-xs text-blue-200 space-y-1">
+                       <div className="text-lg text-blue-400">{tournamentStats.sprt_state}</div>
+                       <div className="font-mono">
+                           LLR {Number(tournamentStats.sprt_llr).toFixed(2)} [{Number(tournamentStats.sprt_lower_bound).toFixed(2)}, {Number(tournamentStats.sprt_upper_bound).toFixed(2)}]
+                       </div>
+                       <div className="text-gray-400">
+                           Elo {Number(tournamentStats.elo_diff).toFixed(1)} ± {Number(tournamentStats.error_margin).toFixed(1)}
+                       </div>
+                   </div>
+               )}
              </div>
 
              <div className="w-full flex justify-between items-end px-8 mb-2"><span className="text-gray-400 font-mono text-sm">BLACK</span><div className="flex items-center gap-2"><Flag code={activeBlackStats.country_code} /><span className="text-white font-bold text-2xl">{activeBlackStats.name}</span></div><span className="text-gray-400 font-mono text-sm">{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span></div>
