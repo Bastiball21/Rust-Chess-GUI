@@ -7,6 +7,7 @@ import { EvalGraph } from "./components/EvalGraph";
 import { MoveList } from "./components/MoveList";
 import { Flag } from "./components/Flag";
 import EngineManager from "./components/EngineManager";
+import { formatTime } from "./utils/formatTime";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
@@ -1246,18 +1247,7 @@ function App() {
           {/* Board & Scoreboard */}
           <div className="flex flex-col gap-2 items-center justify-center bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-lg relative">
              <div className="text-4xl font-bold text-gray-200 mb-4 flex flex-col items-center">
-               {matchResult ? <span className="text-yellow-400">{matchResult}</span> : <span>{tournamentStats ? `${tournamentStats.wins} - ${tournamentStats.losses} - ${tournamentStats.draws}` : "0 - 0 - 0"}</span>}
-               {tournamentStats && (
-                   <div className="mt-2 text-center text-xs text-blue-200 space-y-1">
-                       <div className="text-lg text-blue-400">{tournamentStats.sprt_state}</div>
-                       <div className="font-mono">
-                           LLR {Number(tournamentStats.sprt_llr).toFixed(2)} [{Number(tournamentStats.sprt_lower_bound).toFixed(2)}, {Number(tournamentStats.sprt_upper_bound).toFixed(2)}]
-                       </div>
-                       <div className="text-gray-400">
-                           Elo {Number(tournamentStats.elo_diff).toFixed(1)} ± {Number(tournamentStats.error_margin).toFixed(1)}
-                       </div>
-                   </div>
-               )}
+               {matchResult ? <span className="text-yellow-400">{matchResult}</span> : tournamentStats ? <span>{`${tournamentStats.wins} - ${tournamentStats.losses} - ${tournamentStats.draws}`}</span> : null}
              </div>
 
              <div className="w-full grid grid-cols-[auto_1fr_auto] gap-4 items-end px-8 mb-2">
@@ -1266,7 +1256,10 @@ function App() {
                     <Flag code={activeBlackStats.country_code} />
                     <span className="text-white font-bold text-xl break-words text-center">{activeBlackStats.name}</span>
                  </div>
-                 <span className="text-gray-400 font-mono text-sm text-right">{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
+                 <div className="flex flex-col items-end text-right font-mono text-sm text-gray-400">
+                     <span>{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
+                     <span className="text-gray-500">{formatTime(activeBlackStats.time || 0)}</span>
+                 </div>
              </div>
 
              <div className="w-full aspect-square max-h-[50vh]">
@@ -1279,7 +1272,10 @@ function App() {
                     <Flag code={activeWhiteStats.country_code} />
                     <span className="text-white font-bold text-xl break-words text-center">{activeWhiteStats.name}</span>
                  </div>
-                 <span className="text-gray-400 font-mono text-sm text-right">{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span>
+                 <div className="flex flex-col items-end text-right font-mono text-sm text-gray-400">
+                     <span>{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span>
+                     <span className="text-gray-500">{formatTime(activeWhiteStats.time || 0)}</span>
+                 </div>
              </div>
           </div>
 
@@ -1303,6 +1299,30 @@ function App() {
              </div>
           </div>
         </div>
+
+        {tournamentStats && (
+          <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 flex flex-col gap-2">
+            <h3 className="text-sm font-bold text-gray-400">Tournament Stats</h3>
+            <div className="grid grid-cols-3 gap-2 text-xs font-mono">
+              <div className="bg-gray-900/60 rounded p-2 text-center">
+                <div className="text-gray-500">SPRT</div>
+                <div className="text-blue-400 text-sm">{tournamentStats.sprt_state}</div>
+              </div>
+              <div className="bg-gray-900/60 rounded p-2 text-center">
+                <div className="text-gray-500">LLR</div>
+                <div className="text-gray-200">
+                  {Number(tournamentStats.sprt_llr).toFixed(2)} [{Number(tournamentStats.sprt_lower_bound).toFixed(2)}, {Number(tournamentStats.sprt_upper_bound).toFixed(2)}]
+                </div>
+              </div>
+              <div className="bg-gray-900/60 rounded p-2 text-center">
+                <div className="text-gray-500">Elo</div>
+                <div className="text-gray-200">
+                  {Number(tournamentStats.elo_diff).toFixed(1)} ± {Number(tournamentStats.error_margin).toFixed(1)}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Bottom Area: Eval & Moves - Shrinked */}
         <div className="flex-1 grid grid-cols-3 gap-4 shrink-0 min-h-0">
