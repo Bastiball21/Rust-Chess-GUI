@@ -1,6 +1,7 @@
 import React from 'react';
 import { Settings } from 'lucide-react';
 import { Flag } from './Flag';
+import { formatTime } from '../utils/formatTime';
 
 interface EnginePanelProps {
     stats: {
@@ -16,14 +17,6 @@ interface EnginePanelProps {
     side: "white" | "black";
     onSettingsClick?: () => void; // Added callback for settings
 }
-
-const formatTime = (ms: number) => {
-    if (!ms) return "0:00";
-    const totalSeconds = Math.floor(ms / 1000);
-    const m = Math.floor(totalSeconds / 60);
-    const s = totalSeconds % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-};
 
 export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, onSettingsClick }) => {
     const isWhite = side === "white";
