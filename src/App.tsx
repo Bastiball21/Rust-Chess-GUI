@@ -1254,7 +1254,7 @@ function App() {
                  <span className="text-gray-400 font-mono text-sm text-left">BLACK</span>
                  <div className="flex items-center justify-center gap-2 min-w-0 px-2">
                     <Flag code={activeBlackStats.country_code} />
-                    <span className="text-white font-bold text-xl break-words text-center">{activeBlackStats.name}</span>
+                    <span className="text-white font-bold text-xl truncate text-center">{activeBlackStats.name}</span>
                  </div>
                  <div className="flex flex-col items-end text-right font-mono text-sm text-gray-400">
                      <span>{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
@@ -1270,7 +1270,7 @@ function App() {
                  <span className="text-gray-400 font-mono text-sm text-left">WHITE</span>
                  <div className="flex items-center justify-center gap-2 min-w-0 px-2">
                     <Flag code={activeWhiteStats.country_code} />
-                    <span className="text-white font-bold text-xl break-words text-center">{activeWhiteStats.name}</span>
+                    <span className="text-white font-bold text-xl truncate text-center">{activeWhiteStats.name}</span>
                  </div>
                  <div className="flex flex-col items-end text-right font-mono text-sm text-gray-400">
                      <span>{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span>
