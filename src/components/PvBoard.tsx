@@ -33,7 +33,7 @@ export const PvBoard: React.FC<PvBoardProps> = ({ pv, currentFen, side }) => {
     }, [pv, currentFen]);
 
     return (
-        <div className="w-32 shrink-0 bg-gray-800 rounded border border-gray-600 flex items-center justify-center overflow-hidden aspect-square self-center">
+        <div className="h-full aspect-square bg-gray-800 rounded border border-gray-600 flex items-center justify-center overflow-hidden">
             <div className="w-full h-full pointer-events-none">
                 <Chessground
                     fen={pvFen === "start" ? undefined : pvFen}

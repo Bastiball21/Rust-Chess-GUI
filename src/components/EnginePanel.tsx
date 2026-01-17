@@ -31,13 +31,13 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, onSetting
 
     return (
         <div className="flex flex-col gap-2 h-full">
-             <div className="flex justify-between items-center border-b border-gray-700 pb-2">
-                 <div className="flex items-center gap-2">
-                     <div className={`w-3 h-3 rounded-full ${isWhite ? "bg-white" : "bg-black border border-gray-500"}`}></div>
+             <div className="flex justify-between items-center border-b border-gray-700 pb-2 shrink-0">
+                 <div className="flex items-center gap-2 min-w-0">
+                     <div className={`w-3 h-3 rounded-full shrink-0 ${isWhite ? "bg-white" : "bg-black border border-gray-500"}`}></div>
                      <Flag code={stats.country_code} />
-                     <span className="font-bold text-lg truncate max-w-[150px]" title={stats.name}>{stats.name}</span>
+                     <span className="font-bold text-lg truncate" title={stats.name}>{stats.name}</span>
                  </div>
-                 <div className="flex items-center gap-2">
+                 <div className="flex items-center gap-2 shrink-0">
                      <span className={`font-mono text-xl font-bold ${scoreColor}`}>
                         {stats.score ? (stats.score / 100).toFixed(2) : "0.00"}
                      </span>
@@ -49,7 +49,7 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, onSetting
                  </div>
              </div>
 
-             <div className="grid grid-cols-2 gap-2 text-xs font-mono text-gray-400">
+             <div className="grid grid-cols-2 gap-2 text-xs font-mono text-gray-400 shrink-0">
                  <div className="flex justify-between bg-gray-900/50 p-1.5 rounded">
                      <span>DEPTH</span>
                      <span className="text-white">{stats.depth || 0}</span>
