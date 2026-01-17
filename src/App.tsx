@@ -1262,9 +1262,9 @@ function App() {
 
              <div className="w-full grid grid-cols-[auto_1fr_auto] gap-4 items-end px-8 mb-2">
                  <span className="text-gray-400 font-mono text-sm text-left">BLACK</span>
-                 <div className="flex items-center justify-center gap-2 overflow-hidden px-2">
+                 <div className="flex items-center justify-center gap-2 min-w-0 px-2">
                     <Flag code={activeBlackStats.country_code} />
-                    <span className="text-white font-bold text-xl truncate">{activeBlackStats.name}</span>
+                    <span className="text-white font-bold text-xl break-words text-center">{activeBlackStats.name}</span>
                  </div>
                  <span className="text-gray-400 font-mono text-sm text-right">{activeBlackStats.score ? (activeBlackStats.score / 100).toFixed(2) : "0.00"}</span>
              </div>
@@ -1275,9 +1275,9 @@ function App() {
 
              <div className="w-full grid grid-cols-[auto_1fr_auto] gap-4 items-start px-8 mt-2">
                  <span className="text-gray-400 font-mono text-sm text-left">WHITE</span>
-                 <div className="flex items-center justify-center gap-2 overflow-hidden px-2">
+                 <div className="flex items-center justify-center gap-2 min-w-0 px-2">
                     <Flag code={activeWhiteStats.country_code} />
-                    <span className="text-white font-bold text-xl truncate">{activeWhiteStats.name}</span>
+                    <span className="text-white font-bold text-xl break-words text-center">{activeWhiteStats.name}</span>
                  </div>
                  <span className="text-gray-400 font-mono text-sm text-right">{activeWhiteStats.score ? (activeWhiteStats.score / 100).toFixed(2) : "0.00"}</span>
              </div>
