@@ -12,7 +12,6 @@ use rand::prelude::IndexedRandom;
 use std::io::BufRead;
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::task::JoinSet;
-use std::collections::HashSet;
 use std::path::Path;
 
 const ENGINE_SPAWN_FAILURE_LIMIT: u32 = 3;
@@ -219,13 +218,18 @@ impl Arbiter {
         });
 
         let pairings = Self::generate_pairings(&config);
+        let remaining_rounds = config.games_count.max(1);
+        let disabled_engine_ids_set: HashSet<String> = config.disabled_engine_ids.iter().cloned().collect();
+        let disabled_engine_ids = Arc::new(Mutex::new(disabled_engine_ids_set));
+        let schedule_state = Arc::new(Mutex::new(Vec::new()));
+
         let pairing_states = pairings.iter().map(|(idx_a, idx_b)| PairingState {
             idx_a: *idx_a,
             idx_b: *idx_b,
             next_game_idx: 0,
+            disabled_engine_ids: disabled_engine_ids.clone(),
+            schedule_state: schedule_state.clone(),
         }).collect();
-        let remaining_rounds = config.games_count.max(1);
-        let disabled_engine_ids = config.disabled_engine_ids.iter().cloned().collect();
 
         Ok(Self {
             active_engines: Arc::new(Mutex::new(Vec::new())),
@@ -244,8 +248,8 @@ impl Arbiter {
             pairing_states: Arc::new(Mutex::new(pairing_states)),
             remaining_rounds: Arc::new(Mutex::new(remaining_rounds)),
             next_game_id: Arc::new(Mutex::new(0)),
-            disabled_engine_ids: Arc::new(Mutex::new(disabled_engine_ids)),
-            schedule_state: Arc::new(Mutex::new(Vec::new())),
+            disabled_engine_ids,
+            schedule_state,
             engine_spawn_failures: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -315,52 +319,6 @@ impl Arbiter {
                         *needed -= 1;
                         remove_ids.insert(item.id);
                         removed_updates.push(Self::schedule_item_to_game(item, "Removed", None));
-    pub async fn set_disabled_engine_ids(&self, disabled_engine_ids: Vec<String>) {
-        let mut disabled_ids = self.disabled_engine_ids.lock().await;
-        *disabled_ids = disabled_engine_ids.into_iter().collect();
-    pub async fn load_schedule_state(&self, schedule: Vec<ScheduledGame>) {
-        *self.schedule_state.lock().await = schedule;
-    }
-
-    async fn persist_tournament_state(&self) -> anyhow::Result<()> {
-        let path = match self.config.resume_state_path.as_ref() {
-            Some(path) => path.clone(),
-            None => return Ok(()),
-        };
-        let schedule = { self.schedule_state.lock().await.clone() };
-        let mut config = self.config.clone();
-        config.resume_from_state = false;
-        let state = TournamentResumeState { config, schedule };
-        let json = serde_json::to_string_pretty(&state)?;
-        let tmp_path = format!("{}.tmp", path);
-        std::fs::write(&tmp_path, json)?;
-        std::fs::rename(tmp_path, path)?;
-        Ok(())
-    }
-
-    pub fn remove_resume_state_file(path: &str) -> anyhow::Result<()> {
-        if Path::new(path).exists() {
-            std::fs::remove_file(path)?;
-        }
-        Ok(())
-    }
-
-    fn generate_pairings(&self) -> Vec<(usize, usize)> {
-        let n = self.config.engines.len();
-        let mut pairings = Vec::new();
-        match self.config.mode {
-            TournamentMode::Match => {
-                if n >= 2 { pairings.push((0, 1)); }
-            },
-            TournamentMode::Gauntlet => {
-                if n >= 2 {
-                    for i in 1..n { pairings.push((0, i)); }
-                }
-            },
-            TournamentMode::RoundRobin => {
-                for i in 0..n {
-                    for j in i+1..n {
-                        pairings.push((i, j));
                     }
                 }
             }
@@ -405,9 +363,31 @@ impl Arbiter {
         Ok(())
     }
 
+    pub async fn set_disabled_engine_ids(&self, disabled_engine_ids: Vec<String>) {
+        let mut disabled_ids = self.disabled_engine_ids.lock().await;
+        *disabled_ids = disabled_engine_ids.into_iter().collect();
+    }
+
+    pub async fn load_schedule_state(&self, schedule: Vec<ScheduledGame>) {
+        *self.schedule_state.lock().await = schedule;
+    }
+
+    async fn persist_tournament_state(&self) -> anyhow::Result<()> {
+        persist_resume_state(&self.config.resume_state_path, &self.schedule_state, &self.config).await
+    }
+
+    pub fn remove_resume_state_file(path: &str) -> anyhow::Result<()> {
+        if Path::new(path).exists() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
     pub async fn run_tournament(&self) -> anyhow::Result<()> {
         let concurrency = self.config.concurrency.unwrap_or(4).max(1) as usize;
         let semaphore = Arc::new(Semaphore::new(concurrency));
+        let pairings = Self::generate_pairings(&self.config);
+        let games_count = self.config.games_count;
 
         {
             let mut queue = self.schedule_queue.lock().await;
@@ -417,173 +397,50 @@ impl Arbiter {
             let mut pairing_states = self.pairing_states.lock().await;
             for state in pairing_states.iter_mut() {
                 state.next_game_idx = 0;
-        let mut tasks = Vec::new();
-        let mut game_tasks = Vec::new();
-        let mut schedule_list = Vec::new();
-
-        let mut game_id_counter = 0;
+            }
+        }
         if self.config.resume_from_state {
             let schedule = self.schedule_state.lock().await.clone();
-            schedule_list = schedule;
-            for scheduled_game in &schedule_list {
+
+            for scheduled_game in &schedule {
                 let _ = self.schedule_update_tx.send(scheduled_game.clone()).await;
             }
-            for scheduled_game in &schedule_list {
-                let game_id = scheduled_game.id;
-                let (idx_a, idx_b, game_idx) = match compute_game_mapping(&pairings, games_count, game_id) {
-                    Some(mapping) => mapping,
-                    None => continue,
-                };
-                game_id_counter = game_id_counter.max(game_id);
-                if scheduled_game.state == "Finished" || scheduled_game.state == "Aborted" {
-                    continue;
-                }
-                game_tasks.push((idx_a, idx_b, game_idx, game_id));
-            }
-        } else {
-            for (idx_a, idx_b) in pairings {
-                for i in 0..games_count {
-                    // Determine names for schedule
-                    let (white_idx, black_idx) = if self.config.swap_sides && i % 2 != 0 {
-                        (idx_b, idx_a)
-                    } else {
-                        (idx_a, idx_b)
-                    };
-                    let white_name = self.config.engines[white_idx].name.clone();
-                    let black_name = self.config.engines[black_idx].name.clone();
 
-                    game_id_counter += 1;
-                    let scheduled_game = ScheduledGame {
-                        id: game_id_counter,
-                        white_name: white_name.clone(),
-                        black_name: black_name.clone(),
-                        state: "Pending".to_string(),
-                        result: None,
-                    };
-                    schedule_list.push(scheduled_game.clone());
+            let mut queue = self.schedule_queue.lock().await;
+            let mut pairing_states = self.pairing_states.lock().await;
+            let mut max_id = 0;
+            let mut max_game_indices: HashMap<(usize, usize), u32> = HashMap::new();
 
-                    // Send initial pending state
-                    let _ = self.schedule_update_tx.send(scheduled_game).await;
+            for scheduled_game in &schedule {
+                max_id = max_id.max(scheduled_game.id);
+                if let Some((idx_a, idx_b, game_idx)) = compute_game_mapping(&pairings, games_count, scheduled_game.id) {
+                     let entry = max_game_indices.entry((idx_a, idx_b)).or_insert(0);
+                     *entry = (*entry).max(game_idx + 1);
 
-                    game_tasks.push((idx_a, idx_b, i, game_id_counter));
+                     if scheduled_game.state == "Pending" || scheduled_game.state == "Active" {
+                          let item = self.make_schedule_item(idx_a, idx_b, game_idx, scheduled_game.id);
+                          queue.push_back(item);
+                     }
                 }
             }
-        }
-        {
+
+            for state in pairing_states.iter_mut() {
+                if let Some(next_idx) = max_game_indices.get(&(state.idx_a, state.idx_b)) {
+                    state.next_game_idx = *next_idx;
+                }
+            }
+
             let mut next_game_id = self.next_game_id.lock().await;
-            *next_game_id = 0;
+            *next_game_id = max_id;
+        } else {
+             let mut next_game_id = self.next_game_id.lock().await;
+             *next_game_id = 0;
+             let remaining_rounds = *self.remaining_rounds.lock().await;
+             self.update_remaining_rounds(remaining_rounds).await?;
         }
-        let remaining_rounds = *self.remaining_rounds.lock().await;
-        self.update_remaining_rounds(remaining_rounds).await?;
 
         let mut join_set = JoinSet::new();
-        {
-            let mut schedule_state = self.schedule_state.lock().await;
-            *schedule_state = schedule_list.clone();
-        }
         self.persist_tournament_state().await?;
-
-        for (idx_a, idx_b, game_idx, game_id) in game_tasks {
-             if *self.should_stop.lock().await { break; }
-
-             let (white_engine_idx, black_engine_idx) = if self.config.swap_sides && game_idx % 2 != 0 {
-                 (idx_b, idx_a)
-             } else {
-                 (idx_a, idx_b)
-             };
-
-             let (white_disabled, black_disabled) = {
-                 let disabled_ids = self.disabled_engine_ids.lock().await;
-                 (
-                     is_engine_disabled(&disabled_ids, self.config.engines[white_engine_idx].id.as_deref()),
-                     is_engine_disabled(&disabled_ids, self.config.engines[black_engine_idx].id.as_deref())
-                 )
-             };
-
-             if white_disabled || black_disabled {
-                 let (display_result, base_result) = forfeit_result(white_disabled, black_disabled);
-                 let _ = self.schedule_update_tx.send(ScheduledGame {
-                     id: game_id,
-                     white_name: self.config.engines[white_engine_idx].name.clone(),
-                     black_name: self.config.engines[black_engine_idx].name.clone(),
-                     state: "Skipped".to_string(),
-                     result: Some(display_result),
-                 }).await;
-                 if let Some(base_result) = base_result {
-                     let mut stats = self.tourney_stats.lock().await;
-                     let is_white_a = white_engine_idx == 0;
-                     stats.update(&base_result, is_white_a);
-                     let _ = self.tourney_stats_tx.send(stats.clone()).await;
-                 }
-                 continue;
-             }
-
-             let permit = semaphore.clone().acquire_owned().await?;
-
-             let config = self.config.clone();
-             let should_stop = self.should_stop.clone();
-             let is_paused = self.is_paused.clone();
-             let active_engines = self.active_engines.clone();
-             let game_update_tx = self.game_update_tx.clone();
-             let stats_tx = self.stats_tx.clone();
-             let tourney_stats_tx = self.tourney_stats_tx.clone();
-             let tourney_stats = self.tourney_stats.clone();
-             let pgn_tx = self.pgn_tx.clone();
-             let schedule_update_tx = self.schedule_update_tx.clone();
-             let schedule_state = self.schedule_state.clone();
-             let openings = self.openings.clone();
-             let disabled_engine_ids = self.disabled_engine_ids.clone();
-             let resume_state_path = self.config.resume_state_path.clone();
-
-             let task = tokio::spawn(async move {
-                let _permit = permit;
-                if *should_stop.lock().await { return; }
-
-                let (white_engine_idx, black_engine_idx) = if config.swap_sides && game_idx % 2 != 0 {
-                    (idx_b, idx_a)
-                } else {
-                    (idx_a, idx_b)
-                };
-
-                let (white_disabled, black_disabled) = {
-                    let disabled_ids = disabled_engine_ids.lock().await;
-                    (
-                        is_engine_disabled(&disabled_ids, config.engines[white_engine_idx].id.as_deref()),
-                        is_engine_disabled(&disabled_ids, config.engines[black_engine_idx].id.as_deref())
-                    )
-                };
-
-                if white_disabled || black_disabled {
-                    let (display_result, base_result) = forfeit_result(white_disabled, black_disabled);
-                    let _ = schedule_update_tx.send(ScheduledGame {
-                        id: game_id,
-                        white_name: config.engines[white_engine_idx].name.clone(),
-                        black_name: config.engines[black_engine_idx].name.clone(),
-                        state: "Skipped".to_string(),
-                        result: Some(display_result),
-                    }).await;
-                    if let Some(base_result) = base_result {
-                        let mut stats = tourney_stats.lock().await;
-                        let is_white_a = white_engine_idx == 0;
-                        stats.update(&base_result, is_white_a);
-                        let _ = tourney_stats_tx.send(stats.clone()).await;
-                    }
-                    return;
-                }
-
-                let white_name = config.engines[white_engine_idx].name.clone();
-                let black_name = config.engines[black_engine_idx].name.clone();
-
-                // Notify Active
-                let active_update = ScheduledGame {
-                    id: game_id,
-                    white_name: white_name.clone(),
-                    black_name: black_name.clone(),
-                    state: "Active".to_string(),
-                    result: None
-                };
-                update_schedule_state(&schedule_state, active_update.clone()).await;
-                let _ = schedule_update_tx.send(active_update).await;
 
         loop {
             if *self.should_stop.lock().await {
@@ -609,6 +466,8 @@ impl Arbiter {
                 let error_tx = self.error_tx.clone();
                 let engine_spawn_failures = self.engine_spawn_failures.clone();
                 let disabled_engine_ids = self.disabled_engine_ids.clone();
+                let schedule_state = self.schedule_state.clone();
+                let resume_state_path = self.config.resume_state_path.clone();
 
                 join_set.spawn(async move {
                     let _permit = permit;
@@ -620,14 +479,45 @@ impl Arbiter {
                         (game.idx_a, game.idx_b)
                     };
 
+                    let (white_disabled, black_disabled) = {
+                        let disabled_ids = disabled_engine_ids.lock().await;
+                        (
+                            is_engine_disabled(&disabled_ids, config.engines[white_engine_idx].id.as_deref()),
+                            is_engine_disabled(&disabled_ids, config.engines[black_engine_idx].id.as_deref())
+                        )
+                    };
+
+                    if white_disabled || black_disabled {
+                        let (display_result, base_result) = forfeit_result(white_disabled, black_disabled);
+                        let skipped_update = ScheduledGame {
+                            id: game.id,
+                            white_name: config.engines[white_engine_idx].name.clone(),
+                            black_name: config.engines[black_engine_idx].name.clone(),
+                            state: "Skipped".to_string(),
+                            result: Some(display_result),
+                        };
+                        update_schedule_state(&schedule_state, skipped_update.clone()).await;
+                        let _ = schedule_update_tx.send(skipped_update).await;
+
+                        if let Some(base_result) = base_result {
+                             let mut stats = tourney_stats.lock().await;
+                             let is_white_a = white_engine_idx == 0;
+                             stats.update(&base_result, is_white_a);
+                             let _ = tourney_stats_tx.send(stats.clone()).await;
+                        }
+                        return;
+                    }
+
                     // Notify Active
-                    let _ = schedule_update_tx.send(ScheduledGame {
+                    let active_update = ScheduledGame {
                         id: game.id,
                         white_name: game.white_name.clone(),
                         black_name: game.black_name.clone(),
                         state: "Active".to_string(),
                         result: None
-                    }).await;
+                    };
+                    update_schedule_state(&schedule_state, active_update.clone()).await;
+                    let _ = schedule_update_tx.send(active_update).await;
 
                     let eng_a_config = &config.engines[game.idx_a];
                     let eng_b_config = &config.engines[game.idx_b];
@@ -732,55 +622,9 @@ impl Arbiter {
                                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                                 Err(broadcast::error::RecvError::Closed) => break,
                             }
-                let (white_engine, black_engine, white_idx, black_idx) = if config.swap_sides && game_idx % 2 != 0 {
-                    (&engine_b, &engine_a, idx_b, idx_a)
-                } else {
-                    (&engine_a, &engine_b, idx_a, idx_b)
-                };
-
-                let start_fen = if !openings.is_empty() {
-                    let idx = if config.swap_sides { (game_idx / 2) as usize } else { game_idx as usize };
-                    openings[idx % openings.len()].clone()
-                } else if let Some(ref f) = config.opening_fen {
-                    if !f.trim().is_empty() { f.clone() } else { generate_start_fen(&config.variant) }
-                } else {
-                    generate_start_fen(&config.variant)
-                };
-
-                let res = play_game_static(
-                    white_engine, black_engine, white_idx, black_idx, &start_fen,
-        &config, &game_update_tx, &should_stop, &is_paused, game_id
-                ).await;
-
-                match res {
-                    Ok((result, moves_played)) => {
-                        // Notify Finished
-                        let finished_update = ScheduledGame {
-                            id: game_id,
-                            white_name: white_name.clone(),
-                            black_name: black_name.clone(),
-                            state: "Finished".to_string(),
-                            result: Some(result.clone())
-                        };
-                        update_schedule_state(&schedule_state, finished_update.clone()).await;
-                        let _ = schedule_update_tx.send(finished_update).await;
-                        if let Err(err) = persist_resume_state(&resume_state_path, &schedule_state, &config).await {
-                            println!("Failed to persist schedule state: {}", err);
-                        }
-
-                        let white_name_pgn = &config.engines[white_idx].name;
-                        let black_name_pgn = &config.engines[black_idx].name;
-                        let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
-                        let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen, event_name, game_id);
-                        let _ = pgn_tx.send(pgn).await;
-
-                        {
-                            let mut stats = tourney_stats.lock().await;
-                            let is_white_a = white_idx == 0;
-                            stats.update(&result, is_white_a);
-                            let _ = tourney_stats_tx.send(stats.clone()).await;
                         }
                     });
+
                     let stop_listen_b = should_stop.clone();
                     tokio::spawn(async move {
                         loop {
@@ -795,73 +639,72 @@ impl Arbiter {
                         }
                     });
 
-                    let (white_engine, black_engine, white_idx, black_idx) = if config.swap_sides && game.game_idx % 2 != 0 {
-                        (&engine_b, &engine_a, game.idx_b, game.idx_a)
-                    } else {
-                        (&engine_a, &engine_b, game.idx_a, game.idx_b)
-                    };
+                let (white_engine, black_engine, white_idx, black_idx) = if config.swap_sides && game.game_idx % 2 != 0 {
+                    (&engine_b, &engine_a, game.idx_b, game.idx_a)
+                } else {
+                    (&engine_a, &engine_b, game.idx_a, game.idx_b)
+                };
 
-                    let start_fen = if !openings.is_empty() {
-                        let idx = if config.swap_sides { (game.game_idx / 2) as usize } else { game.game_idx as usize };
-                        openings[idx % openings.len()].clone()
-                    } else if let Some(ref f) = config.opening_fen {
-                        if !f.trim().is_empty() { f.clone() } else { generate_start_fen(&config.variant) }
-                    } else {
-                        generate_start_fen(&config.variant)
-                    };
+                let white_name_pgn = config.engines[white_idx].name.clone();
+                let black_name_pgn = config.engines[black_idx].name.clone();
 
-                    let res = play_game_static(
-                        white_engine, black_engine, white_idx, black_idx, &start_fen,
-                        &config, &game_update_tx, &should_stop, &is_paused, game.id
-                    ).await;
+                let start_fen = if !openings.is_empty() {
+                    let idx = if config.swap_sides { (game.game_idx / 2) as usize } else { game.game_idx as usize };
+                    openings[idx % openings.len()].clone()
+                } else if let Some(ref f) = config.opening_fen {
+                    if !f.trim().is_empty() { f.clone() } else { generate_start_fen(&config.variant) }
+                } else {
+                    generate_start_fen(&config.variant)
+                };
 
-                    match res {
-                        Ok((result, moves_played)) => {
-                            // Notify Finished
-                            let _ = schedule_update_tx.send(ScheduledGame {
+                let res = play_game_static(
+                    white_engine, black_engine, white_idx, black_idx, &start_fen,
+        &config, &game_update_tx, &should_stop, &is_paused, game.id
+                ).await;
+
+                match res {
+                    Ok((result, moves_played)) => {
+                        // Notify Finished
+                        let finished_update = ScheduledGame {
                                 id: game.id,
                                 white_name: game.white_name.clone(),
                                 black_name: game.black_name.clone(),
-                                state: "Finished".to_string(),
-                                result: Some(result.clone())
-                            }).await;
-
-                            let white_name_pgn = &config.engines[white_idx].name;
-                            let black_name_pgn = &config.engines[black_idx].name;
-                            let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
-                            let pgn = format_pgn(&moves_played, &result, white_name_pgn, black_name_pgn, &start_fen, event_name, game.id);
-                            let _ = pgn_tx.send(pgn).await;
-
-                            {
-                                let mut stats = tourney_stats.lock().await;
-                                let is_white_a = white_idx == 0;
-                                stats.update(&result, is_white_a);
-                                let _ = tourney_stats_tx.send(stats.clone()).await;
-                            }
+                            state: "Finished".to_string(),
+                            result: Some(result.clone())
+                        };
+                        update_schedule_state(&schedule_state, finished_update.clone()).await;
+                        let _ = schedule_update_tx.send(finished_update).await;
+                        if let Err(err) = persist_resume_state(&resume_state_path, &schedule_state, &config).await {
+                            println!("Failed to persist schedule state: {}", err);
                         }
-                        Err(err) => {
+
+                        let event_name = config.event_name.as_deref().unwrap_or("CCRL GUI Tournament");
+                        let pgn = format_pgn(&moves_played, &result, &white_name_pgn, &black_name_pgn, &start_fen, event_name, game.id);
+                        let _ = pgn_tx.send(pgn).await;
+
+                        {
+                            let mut stats = tourney_stats.lock().await;
+                            let is_white_a = white_idx == 0;
+                            stats.update(&result, is_white_a);
+                            let _ = tourney_stats_tx.send(stats.clone()).await;
+                        }
+                    }
+                    Err(err) => {
                             if err.to_string() != "stopped" {
                                 println!("Game {} failed: {}", game.id, err);
                             }
-                            let _ = schedule_update_tx.send(ScheduledGame {
+                            let aborted_update = ScheduledGame {
                                 id: game.id,
                                 white_name: game.white_name.clone(),
                                 black_name: game.black_name.clone(),
                                 state: "Aborted".to_string(),
                                 result: None
-                            }).await;
-                        }
-                        let aborted_update = ScheduledGame {
-                            id: game_id,
-                            white_name: white_name.clone(),
-                            black_name: black_name.clone(),
-                            state: "Aborted".to_string(),
-                            result: None
-                        };
-                        update_schedule_state(&schedule_state, aborted_update.clone()).await;
-                        let _ = schedule_update_tx.send(aborted_update).await;
-                        if let Err(err) = persist_resume_state(&resume_state_path, &schedule_state, &config).await {
-                            println!("Failed to persist schedule state: {}", err);
+                            };
+                            update_schedule_state(&schedule_state, aborted_update.clone()).await;
+                            let _ = schedule_update_tx.send(aborted_update).await;
+                            if let Err(err) = persist_resume_state(&resume_state_path, &schedule_state, &config).await {
+                                println!("Failed to persist schedule state: {}", err);
+                            }
                         }
                     }
 
@@ -1005,11 +848,16 @@ async fn persist_resume_state(
     let schedule = schedule_state.lock().await.clone();
     let mut config = config.clone();
     config.resume_from_state = false;
-    let state = TournamentResumeState { config, schedule };
-    let json = serde_json::to_string_pretty(&state)?;
-    let tmp_path = format!("{}.tmp", path);
-    std::fs::write(&tmp_path, json)?;
-    std::fs::rename(tmp_path, path)?;
+
+    tokio::task::spawn_blocking(move || {
+        let state = TournamentResumeState { config, schedule };
+        let json = serde_json::to_string_pretty(&state)?;
+        let tmp_path = format!("{}.tmp", path);
+        std::fs::write(&tmp_path, json)?;
+        std::fs::rename(tmp_path, path)?;
+        Ok::<(), anyhow::Error>(())
+    }).await??;
+
     Ok(())
 }
 
