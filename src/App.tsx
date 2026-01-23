@@ -245,6 +245,18 @@ function App() {
   const [tournamentStats, setTournamentStats] = useState<any>(null);
   const [editingEngineIdx, setEditingEngineIdx] = useState<number | null>(null);
   const [selectedEngineIdx, setSelectedEngineIdx] = useState(0);
+  const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null);
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
+  const showToast = (message: string, type: 'error' | 'success' = 'error') => {
+    setToast({ message, type });
+  };
 
   // Sync engine names/flags if changed
   useEffect(() => {
@@ -525,9 +537,14 @@ function App() {
         });
     });
 
+    const unlistenToast = listen("toast", (event: any) => {
+      const error = event.payload as { message: string };
+      showToast(error.message, 'error');
+    });
+
     return () => {
       unlistenUpdate.then(f => f()); unlistenTime.then(f => f()); unlistenStats.then(f => f());
-      unlistenTourneyStats.then(f => f()); unlistenSchedule.then(f => f());
+      unlistenTourneyStats.then(f => f()); unlistenSchedule.then(f => f()); unlistenToast.then(f => f());
     };
   }, []);
 
@@ -607,12 +624,21 @@ function App() {
       store.set("active_tournament", config);
       store.save();
     }
-    await invoke("start_match", { config });
-    setActiveTab('schedule');
+    try {
+      await invoke("start_match", { config });
+      setActiveTab('schedule');
+    } catch (err) {
+      showToast(`Failed to start match: ${err}`, 'error');
+      setMatchRunning(false);
+    }
   };
 
   const stopMatch = async () => {
-    await invoke("stop_match");
+    try {
+      await invoke("stop_match");
+    } catch (err) {
+      console.error(err);
+    }
     setMatchRunning(false);
     setActiveTournamentConfig(null);
     if (store) {
@@ -631,22 +657,42 @@ function App() {
     setIsPaused(false);
     setSelectedGameId(null);
     setShowResumePrompt(false);
-    await invoke("resume_match");
-    setActiveTab('schedule');
+    try {
+      await invoke("resume_match");
+      setActiveTab('schedule');
+    } catch (err) {
+      showToast(`Failed to resume match: ${err}`, 'error');
+      setMatchRunning(false);
+    }
   };
 
   const discardSavedTournament = async () => {
-    await invoke("discard_saved_tournament");
-    setSavedTournament(null);
-    setShowResumePrompt(false);
+    try {
+      await invoke("discard_saved_tournament");
+      setSavedTournament(null);
+      setShowResumePrompt(false);
+    } catch (err) {
+      showToast(`Failed to discard saved tournament: ${err}`, 'error');
+    }
   };
 
-  const togglePause = async () => { await invoke("pause_match", { paused: !isPaused }); setIsPaused(!isPaused); };
+  const togglePause = async () => {
+    try {
+      await invoke("pause_match", { paused: !isPaused });
+      setIsPaused(!isPaused);
+    } catch (err) {
+      showToast(`Failed to toggle pause: ${err}`, 'error');
+    }
+  };
   const updateRemainingRounds = async () => {
     const value = Math.max(0, Math.floor(remainingRounds));
     setRemainingRounds(value);
     if (matchRunning) {
-      await invoke("update_remaining_rounds", { remaining_rounds: value });
+      try {
+        await invoke("update_remaining_rounds", { remaining_rounds: value });
+      } catch (err) {
+        showToast(`Failed to update remaining rounds: ${err}`, 'error');
+      }
     }
   };
   const toggleEngineDisabled = async (engineId?: string) => {
@@ -656,7 +702,11 @@ function App() {
       : [...disabledEngineIds, engineId];
     setDisabledEngineIds(nextIds);
     if (matchRunning) {
-      await invoke("set_disabled_engines", { disabled_engine_ids: nextIds });
+      try {
+        await invoke("set_disabled_engines", { disabled_engine_ids: nextIds });
+      } catch (err) {
+        showToast(`Failed to update disabled engines: ${err}`, 'error');
+      }
     }
   };
 
@@ -748,11 +798,11 @@ function App() {
     if (!destinationPath) return;
     try {
       await invoke("export_tournament_pgn", { sourcePath, destinationPath });
-      alert("Tournament PGN exported successfully.");
+      showToast("Tournament PGN exported successfully.", 'success');
     } catch (err) {
       console.error("Failed to export tournament PGN", err);
       const message = err instanceof Error ? err.message : `${err}`;
-      alert(`Failed to export tournament PGN: ${message}`);
+      showToast(`Failed to export tournament PGN: ${message}`, 'error');
     }
   };
 
@@ -809,7 +859,12 @@ function App() {
   );
 
   return (
-    <div className="h-screen w-screen bg-gray-900 text-white flex overflow-hidden text-lg">
+    <div className="h-screen w-screen bg-gray-900 text-white flex overflow-hidden text-lg relative">
+      {toast && (
+        <div className={`fixed top-4 right-4 px-4 py-2 rounded shadow-lg z-[100] animate-bounce ${toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-green-600 text-white'}`}>
+          {toast.message}
+        </div>
+      )}
       {showResumePrompt && savedTournament && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
           <div className="bg-gray-800 p-6 rounded-lg w-96 border border-gray-600 shadow-2xl">
