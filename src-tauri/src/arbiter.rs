@@ -109,12 +109,12 @@ impl Arbiter {
     ) -> anyhow::Result<Self> {
         let mut openings = Vec::new();
         if let Some(ref path) = config.opening_file {
-            openings = load_openings(path).unwrap_or_default();
+            openings = load_openings(path)?;
         }
 
         if let Some(order) = &config.opening_order {
             if order == "random" {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 openings.shuffle(&mut rng);
             }
         }
@@ -779,8 +779,8 @@ fn generate_start_fen(variant: &str) -> String {
         let _pieces = vec![Role::Rook, Role::Knight, Role::Bishop, Role::Queen, Role::King, Role::Bishop, Role::Knight, Role::Rook];
         let mut rng = rand::rng();
         let mut dark_squares = vec![0, 2, 4, 6]; let mut light_squares = vec![1, 3, 5, 7];
-        let b1_pos = *dark_squares.choose(&mut rng).unwrap();
-        let b2_pos = *light_squares.choose(&mut rng).unwrap();
+        let b1_pos = *dark_squares.choose(&mut rng).expect("Failed to choose dark square");
+        let b2_pos = *light_squares.choose(&mut rng).expect("Failed to choose light square");
         let mut empty: Vec<usize> = (0..8).filter(|&i| i != b1_pos && i != b2_pos).collect();
         empty.shuffle(&mut rng);
         let q_pos = empty[0]; let n1_pos = empty[1]; let n2_pos = empty[2];
@@ -977,7 +977,7 @@ async fn play_game_static(
 
     let mut consec_resign_moves = 0;
     let mut consec_draw_moves = 0;
-    let mut game_result = "*".to_string();
+        let mut game_result;
     let mut repetition_counts: HashMap<String, u32> = HashMap::new();
     let mut halfmove_clock: u32 = start_fen
         .split_whitespace()
@@ -1213,30 +1213,32 @@ async fn play_game_static(
     Ok((game_result, moves_history))
 }
 
-fn load_openings(path: &str) -> Option<Vec<String>> {
-    let file = std::fs::File::open(path).ok()?;
+fn load_openings(path: &str) -> anyhow::Result<Vec<String>> {
+    let file = std::fs::File::open(path).map_err(|e| anyhow::anyhow!("Failed to open opening file: {}", e))?;
     let reader = std::io::BufReader::new(file);
     let mut fens = Vec::new();
     let is_pgn = path.ends_with(".pgn");
 
     for line_res in reader.lines() {
-        if let Ok(line) = line_res {
-            let line = line.trim();
-            if line.is_empty() { continue; }
-            if is_pgn {
-                // Simple PGN FEN extraction
-                if line.starts_with("[FEN \"") && line.ends_with("\"]") {
-                    let fen = &line[6..line.len()-2];
-                    fens.push(fen.to_string());
-                }
-            } else {
-                // Assume EPD: take everything before first " ;" or just the whole line if clean
-                let parts: Vec<&str> = line.split(';').collect();
-                fens.push(parts[0].trim().to_string());
+        let line = line_res?;
+        let line = line.trim();
+        if line.is_empty() { continue; }
+        if is_pgn {
+            // Simple PGN FEN extraction
+            if line.starts_with("[FEN \"") && line.ends_with("\"]") {
+                let fen = &line[6..line.len()-2];
+                fens.push(fen.to_string());
             }
+        } else {
+            // Assume EPD: take everything before first " ;" or just the whole line if clean
+            let parts: Vec<&str> = line.split(';').collect();
+            fens.push(parts[0].trim().to_string());
         }
     }
-    if fens.is_empty() { None } else { Some(fens) }
+    if fens.is_empty() {
+        return Err(anyhow::anyhow!("No valid openings found in file"));
+    }
+    Ok(fens)
 }
 
 fn parse_info(line: &str, engine_idx: usize) -> Option<EngineStats> {

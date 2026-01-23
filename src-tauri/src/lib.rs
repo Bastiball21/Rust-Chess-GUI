@@ -115,7 +115,7 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, mut config: Tou
             }
         }
     }
-    let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     {
         let mut tracker = state.progress_tracker.lock().unwrap();
@@ -207,7 +207,7 @@ async fn resume_match(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
     config.resume_state_path = Some(path.to_string_lossy().to_string());
     config.resume_from_state = true;
 
-    let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     {
         let mut tracker = state.progress_tracker.lock().unwrap();
@@ -321,6 +321,7 @@ async fn export_tournament_pgn(source_path: String, destination_path: String) ->
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    env_logger::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -345,15 +346,15 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match, update_remaining_rounds])
-        .invoke_handler(tauri::generate_handler![start_match, stop_match, pause_match, set_disabled_engines])
         .invoke_handler(tauri::generate_handler![
             start_match,
+            stop_match,
+            pause_match,
+            update_remaining_rounds,
+            set_disabled_engines,
             get_saved_tournament,
             discard_saved_tournament,
             resume_match,
-            stop_match,
-            pause_match,
             export_tournament_pgn
         ])
         .run(tauri::generate_context!())
