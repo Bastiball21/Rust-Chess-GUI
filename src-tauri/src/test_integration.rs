@@ -32,7 +32,7 @@ mod tests {
                 EngineConfig {
                     id: None,
                     name: "MockBlack".into(),
-                    path: path_str,
+                    path: path_str.clone(),
                     options: vec![],
                     country_code: None,
                     args: None,
