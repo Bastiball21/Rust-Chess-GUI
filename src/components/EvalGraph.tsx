@@ -32,7 +32,7 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({ data }) => {
                     <Tooltip
                         contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', fontSize: '12px' }}
                         itemStyle={{ color: '#9ca3af' }}
-                        formatter={(val: number) => [(val / 100).toFixed(2), "Score"]}
+                        formatter={(val: number | undefined) => [val !== undefined ? (val / 100).toFixed(2) : "0.00", "Score"]}
                         labelFormatter={(label) => `Move ${label}`}
                     />
                     <ReferenceLine y={0} stroke="#4b5563" strokeDasharray="3 3" />

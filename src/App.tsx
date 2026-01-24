@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { FixedSizeList as List, type ListChildComponentProps } from "react-window";
+import { List } from "react-window";
 import { Board } from "./components/Board";
 import { EnginePanel } from "./components/EnginePanel";
 import { PvBoard } from "./components/PvBoard";
@@ -12,7 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
-import { open as openPath } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { Cog, Plus, Trash2, FolderOpen, Save, Database, Play, ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -85,30 +85,24 @@ interface ScheduledGame {
   result: string | null;
 }
 
-interface ScheduleListData {
-  schedule: ScheduledGame[];
-  selectedGameId: number | null;
-  onSelect: (id: number) => void;
-}
-
 const scheduleRowHeight = 92;
 const scheduleListMaxHeight = 360;
 
-const ScheduleRow = ({ index, style, data }: ListChildComponentProps<ScheduleListData>) => {
-  const game = data.schedule[index];
+const ScheduleRow = ({ index, style, schedule, selectedGameId, onSelect }: any) => {
+  const game = schedule[index];
 
   if (!game) {
     return null;
   }
 
   const isActive = game.state === "Active";
-  const isSelected = data.selectedGameId === game.id;
+  const isSelected = selectedGameId === game.id;
 
   return (
     <div style={{ ...style, padding: "4px 0" }}>
       <div
         className={`p-2 rounded text-xs border flex flex-col gap-1 cursor-pointer transition ${isActive ? "bg-blue-900/30 border-blue-600" : "bg-gray-700 border-gray-700"} ${isSelected ? "ring-2 ring-yellow-400" : ""}`}
-        onClick={() => data.onSelect(game.id)}
+        onClick={() => onSelect(game.id)}
       >
         <div className="flex justify-between font-bold">
           <span>#{game.id}</span>
@@ -144,6 +138,7 @@ interface TournamentConfig {
   event_name?: string | null;
   resume_state_path?: string | null;
   resume_from_state?: boolean;
+  disabled_engine_ids?: string[] | null;
 }
 
 interface TournamentResumeState {
@@ -224,7 +219,6 @@ function App() {
   const [incM, setIncM] = useState(0);
   const [incS, setIncS] = useState(1);
 
-  const [isPaused, setIsPaused] = useState(false);
   const [matchRunning, setMatchRunning] = useState(false);
   const [store, setStore] = useState<any>(null);
   const [draftRestoredAt, setDraftRestoredAt] = useState<string | null>(null);
@@ -584,7 +578,6 @@ function App() {
     selectedGameIdRef.current = null;
     clearGameState();
     setMatchRunning(true);
-    setIsPaused(false);
     setSchedule([]);
     setSelectedGameId(null);
     setRemainingRounds(gamesCount);
@@ -654,7 +647,6 @@ function App() {
     applyTournamentConfig(savedTournament.config);
     setSchedule(savedTournament.schedule);
     setMatchRunning(true);
-    setIsPaused(false);
     setSelectedGameId(null);
     setShowResumePrompt(false);
     try {
@@ -676,14 +668,6 @@ function App() {
     }
   };
 
-  const togglePause = async () => {
-    try {
-      await invoke("pause_match", { paused: !isPaused });
-      setIsPaused(!isPaused);
-    } catch (err) {
-      showToast(`Failed to toggle pause: ${err}`, 'error');
-    }
-  };
   const updateRemainingRounds = async () => {
     const value = Math.max(0, Math.floor(remainingRounds));
     setRemainingRounds(value);
@@ -785,7 +769,7 @@ function App() {
   };
   const revealPgnPath = async () => {
     const target = pgnPath.trim() || resolvedPgnPath || defaultPgnPath;
-    if (target) await openPath(target);
+    if (target) await revealItemInDir(target);
   };
 
   const exportTournamentPgn = async () => {
@@ -1253,15 +1237,13 @@ function App() {
                     </div>
                     <div className="flex justify-between items-center mb-2"><label className="text-sm font-semibold text-gray-400 uppercase">Upcoming Games</label><span className="text-xs text-gray-500">{schedule.length} Total</span></div>
                     <List
-                        height={scheduleListHeight}
-                        itemCount={schedule.length}
-                        itemSize={scheduleRowHeight}
-                        width="100%"
-                        itemData={scheduleListData}
+                        style={{ height: scheduleListHeight, width: "100%" }}
+                        rowCount={schedule.length}
+                        rowHeight={scheduleRowHeight}
+                        rowComponent={ScheduleRow}
+                        rowProps={scheduleListData}
                         className="pr-1"
-                    >
-                        {ScheduleRow}
-                    </List>
+                    />
                 </div>
             )}
         </div>
