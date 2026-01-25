@@ -7,7 +7,7 @@ import SettingsModal from './components/SettingsModal';
 import StatsPanel from './components/StatsPanel';
 import BottomPanel from './components/BottomPanel';
 import EvalMovePanel from './components/EvalMovePanel';
-import { Settings, Square } from 'lucide-react';
+import { Pause, Play, Settings, Square } from 'lucide-react';
 
 // --- Types --- (Centralize these in types.ts later)
 export interface GameUpdate {
@@ -86,6 +86,7 @@ interface TournamentSettings {
   pgnPath: string;
   variant: 'standard' | 'chess960';
   sprt: SprtSettings;
+  disabledEngineIds: string[];
 }
 
 interface AdjudicationConfig {
@@ -124,6 +125,7 @@ function App() {
       eventName: '',
       pgnPath: 'tournament.pgn',
       variant: 'standard',
+      disabledEngineIds: [],
       sprt: {
           enabled: false,
           h0Elo: 0,
@@ -160,6 +162,7 @@ function App() {
   const [errors, setErrors] = useState<any[]>([]);
   const [activeBottomTab, setActiveBottomTab] = useState('standings');
   const [matchActive, setMatchActive] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'general' | 'engines' | 'tournaments'>('engines');
 
   // Preferences
@@ -169,6 +172,26 @@ function App() {
   const lastAppliedMoveRef = useRef<string | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const gameUpdateRef = useRef<GameUpdate | null>(null);
+
+  const normalizeEngines = (nextEngines: EngineConfig[]) => (
+      nextEngines.map(engine => (engine.id ? engine : { ...engine, id: crypto.randomUUID() }))
+  );
+
+  useEffect(() => {
+      if (engines.some(engine => !engine.id)) {
+          setEngines(prev => normalizeEngines(prev));
+      }
+  }, [engines]);
+
+  useEffect(() => {
+      setTournamentSettings(prev => {
+          if (engines.length === 0 && prev.disabledEngineIds.length === 0) return prev;
+          const validIds = new Set(engines.map(engine => engine.id).filter((id): id is string => Boolean(id)));
+          const nextDisabled = prev.disabledEngineIds.filter(id => validIds.has(id));
+          if (nextDisabled.length === prev.disabledEngineIds.length) return prev;
+          return { ...prev, disabledEngineIds: nextDisabled };
+      });
+  }, [engines]);
 
   // Listen for storage changes (settings modal updates)
   useEffect(() => {
@@ -302,7 +325,8 @@ function App() {
   }, [activeStats?.pv, lastMove, prefArrows]);
 
   const startMatch = async () => {
-      if (engines.length < 2) {
+      const enabledEngines = engines.filter(engine => !tournamentSettings.disabledEngineIds.includes(engine.id ?? ''));
+      if (enabledEngines.length < 2) {
           alert("Please add at least 2 engines.");
           setIsSettingsOpen(true);
           return;
@@ -311,7 +335,7 @@ function App() {
           await invoke('start_match', {
               config: {
                   mode: tournamentSettings.mode,
-                  engines,
+                  engines: enabledEngines,
                   time_control: { base_ms: tournamentSettings.timeControl.baseMs, inc_ms: tournamentSettings.timeControl.incMs },
                   games_count: tournamentSettings.gamesCount,
                   swap_sides: tournamentSettings.swapSides,
@@ -333,6 +357,7 @@ function App() {
               }
           });
           setMatchActive(true);
+          setIsPaused(false);
       } catch (e) {
           console.error(e);
           alert("Failed to start match: " + e);
@@ -342,6 +367,18 @@ function App() {
   const stopMatch = async () => {
       await invoke('stop_match');
       setMatchActive(false);
+      setIsPaused(false);
+  };
+
+  const togglePause = async () => {
+      const nextPaused = !isPaused;
+      try {
+          await invoke('pause_match', { paused: nextPaused });
+          setIsPaused(nextPaused);
+      } catch (e) {
+          console.error(e);
+          alert("Failed to toggle pause: " + e);
+      }
   };
 
   return (
@@ -352,7 +389,7 @@ function App() {
             onClose={() => setIsSettingsOpen(false)}
             initialTab={settingsTab}
             onStartMatch={startMatch}
-            engines={engines} onUpdateEngines={setEngines}
+            engines={engines} onUpdateEngines={(nextEngines) => setEngines(normalizeEngines(nextEngines))}
             adjudication={adjudication} onUpdateAdjudication={setAdjudication}
             opening={opening} onUpdateOpening={setOpening}
             tournamentSettings={tournamentSettings}
@@ -368,9 +405,21 @@ function App() {
                 </div>
                 <div className="flex gap-2">
                     {matchActive && (
-                        <button onClick={stopMatch} className="bg-red-600 hover:bg-red-500 px-4 py-1.5 rounded flex items-center gap-2 font-bold text-sm">
-                            <Square size={16}/> Stop
-                        </button>
+                        <>
+                            <button
+                                onClick={togglePause}
+                                className="bg-amber-500 hover:bg-amber-400 px-4 py-1.5 rounded flex items-center gap-2 font-bold text-sm text-gray-900"
+                            >
+                                {isPaused ? <Play size={16}/> : <Pause size={16}/>}
+                                {isPaused ? 'Resume' : 'Pause'}
+                            </button>
+                            <button
+                                onClick={stopMatch}
+                                className="bg-red-600 hover:bg-red-500 px-4 py-1.5 rounded flex items-center gap-2 font-bold text-sm"
+                            >
+                                <Square size={16}/> Stop
+                            </button>
+                        </>
                     )}
                     <button
                         onClick={() => {
