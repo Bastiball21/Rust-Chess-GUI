@@ -246,16 +246,20 @@ function App() {
             <div className="flex-1 flex overflow-hidden">
                 {/* Left: Board Area */}
                 <div className="flex-1 flex flex-col items-center justify-center bg-gray-900/50 relative p-4">
-                    <div className="w-full max-w-[80vh] aspect-square shadow-2xl rounded-lg overflow-hidden border-4 border-gray-800">
-                         <Chessground
-                             fen={fen}
-                             orientation={orientation}
-                             config={{
-                                 viewOnly: true,
-                                 highlight: { lastMove: prefHighlight, check: true },
-                                 drawable: { visible: prefArrows }, // Arrows logic pending
-                             }}
-                         />
+                    <div className="w-full h-full max-h-full aspect-square shadow-2xl rounded-lg overflow-hidden border-4 border-gray-800 flex items-center justify-center">
+                         <div style={{ width: '100%', height: '100%' }}>
+                             <Chessground
+                                 fen={fen}
+                                 orientation={orientation}
+                                 width="100%"
+                                 height="100%"
+                                 config={{
+                                     viewOnly: true,
+                                     highlight: { lastMove: prefHighlight, check: true },
+                                     drawable: { visible: prefArrows }, // Arrows logic pending
+                                 }}
+                             />
+                         </div>
                     </div>
                     {/* Engines Names near board */}
                     <div className="absolute top-4 left-4 text-white font-bold bg-black/50 px-3 py-1 rounded">
