@@ -231,6 +231,9 @@ impl Arbiter {
             schedule_state: schedule_state.clone(),
         }).collect();
 
+        let sprt_enabled = config.sprt_enabled;
+        let sprt_config = config.sprt_config.clone();
+
         Ok(Self {
             active_engines: Arc::new(Mutex::new(Vec::new())),
             config,
@@ -243,7 +246,7 @@ impl Arbiter {
             should_stop: Arc::new(Mutex::new(false)),
             is_paused: Arc::new(Mutex::new(false)),
             openings,
-            tourney_stats: Arc::new(Mutex::new(TournamentStats::new(config.sprt_enabled, config.sprt_config.clone()))),
+            tourney_stats: Arc::new(Mutex::new(TournamentStats::new(sprt_enabled, sprt_config))),
             schedule_queue: Arc::new(Mutex::new(VecDeque::new())),
             pairing_states: Arc::new(Mutex::new(pairing_states)),
             remaining_rounds: Arc::new(Mutex::new(remaining_rounds)),
