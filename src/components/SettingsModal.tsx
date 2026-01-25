@@ -66,6 +66,8 @@ interface TournamentSettings {
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: 'general' | 'engines' | 'tournaments';
+  onStartMatch?: () => void;
   engines: EngineConfig[];
   onUpdateEngines: (engines: EngineConfig[]) => void;
   adjudication: AdjudicationConfig;
@@ -96,6 +98,7 @@ const EngineEditor: React.FC<{
     });
     setOptionValues(opts);
   }, [localEngine.options]);
+
 
   const detectOptions = async () => {
     if (!localEngine.path) return;
@@ -245,14 +248,21 @@ const EngineEditor: React.FC<{
 };
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
-    isOpen, onClose,
+    isOpen, onClose, initialTab, onStartMatch,
     engines, onUpdateEngines,
     adjudication, onUpdateAdjudication,
     opening, onUpdateOpening,
     tournamentSettings, onUpdateTournamentSettings
 }) => {
-  const [activeTab, setActiveTab] = useState<'general' | 'engines' | 'games' | 'tournaments'>('engines');
+  const [activeTab, setActiveTab] = useState<'general' | 'engines' | 'tournaments'>('engines');
   const [editingEngineIdx, setEditingEngineIdx] = useState<number | null>(null);
+  const [engineCheckRunning, setEngineCheckRunning] = useState(false);
+  const [engineCheckResults, setEngineCheckResults] = useState<Array<{
+      id: string;
+      name: string;
+      ok: boolean;
+      message?: string;
+  }>>([]);
 
   // General Settings State
   const [generalSettings, setGeneralSettings] = useState({
@@ -270,6 +280,37 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const updateTournament = (updates: Partial<TournamentSettings>) => {
       onUpdateTournamentSettings({ ...tournamentSettings, ...updates });
+  };
+
+  useEffect(() => {
+      if (isOpen && initialTab) {
+          setActiveTab(initialTab);
+      }
+  }, [initialTab, isOpen]);
+
+  useEffect(() => {
+      setEngineCheckResults([]);
+  }, [engines]);
+
+  const runEngineCheck = async () => {
+      if (engines.length === 0) return;
+      setEngineCheckRunning(true);
+      const results: Array<{ id: string; name: string; ok: boolean; message?: string }> = [];
+      for (const engine of engines) {
+          try {
+              await invoke<UciOption[]>('query_engine_options', { path: engine.path });
+              results.push({ id: engine.id || engine.name, name: engine.name, ok: true });
+          } catch (error) {
+              results.push({
+                  id: engine.id || engine.name,
+                  name: engine.name,
+                  ok: false,
+                  message: String(error),
+              });
+          }
+      }
+      setEngineCheckResults(results);
+      setEngineCheckRunning(false);
   };
 
   if (!isOpen) return null;
@@ -293,7 +334,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* Header */}
             <div className="bg-gray-900 p-4 border-b border-gray-700 flex justify-between items-center">
                 <div className="flex gap-4">
-                    {['general', 'engines', 'games', 'tournaments'].map(tab => (
+                    {['general', 'engines', 'tournaments'].map(tab => (
                         <button key={tab}
                                 onClick={() => setActiveTab(tab as any)}
                                 className={`px-4 py-2 rounded font-bold capitalize transition-colors ${activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}>
@@ -388,241 +429,409 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                 )}
 
-                {activeTab === 'games' && (
-                    <div className="grid grid-cols-2 gap-6">
-                        <div className="space-y-4">
-                            <h4 className="font-bold text-lg text-blue-400 border-b border-gray-700 pb-2">Opening Suite</h4>
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">Variant</label>
-                                <select className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
-                                        value={tournamentSettings.variant}
-                                        onChange={e => updateTournament({ variant: e.target.value as TournamentSettings['variant'] })}>
-                                    <option value="standard">Standard</option>
-                                    <option value="chess960">Chess960</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">FEN String</label>
-                                <input className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
-                                       placeholder="Paste FEN..."
-                                       value={opening.fen || ""}
-                                       onChange={e => onUpdateOpening({...opening, fen: e.target.value})} />
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">PGN / EPD File</label>
-                                <div className="flex gap-2">
-                                    <input className="flex-1 bg-gray-700 border border-gray-600 rounded p-2 text-xs"
-                                           value={opening.file || ""} readOnly placeholder="No file selected" />
-                                    <button onClick={async () => {
-                                        const selected = await open({ filters: [{ name: 'Openings', extensions: ['pgn', 'epd'] }] });
-                                        if (selected && typeof selected === 'string') onUpdateOpening({...opening, file: selected});
-                                    }} className="bg-gray-600 px-3 rounded hover:bg-gray-500">Browse...</button>
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs text-gray-400 mb-1">Book Depth (Plies)</label>
-                                    <input type="number" className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
-                                           value={opening.depth || 0} onChange={e => onUpdateOpening({...opening, depth: parseInt(e.target.value) || 0})} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs text-gray-400 mb-1">Order</label>
-                                    <select className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
-                                            value={opening.order || "sequential"} onChange={e => onUpdateOpening({...opening, order: e.target.value})}>
-                                        <option value="sequential">Sequential</option>
-                                        <option value="random">Random</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="pt-4">
-                                <h5 className="font-bold text-sm text-gray-300 mb-2">Opening Book (Polyglot)</h5>
-                                <div className="flex gap-2">
-                                    <input className="flex-1 bg-gray-700 border border-gray-600 rounded p-2 text-xs"
-                                           value={opening.book_path || ""} readOnly placeholder="No .bin book selected" />
-                                    <button onClick={async () => {
-                                        const selected = await open({ filters: [{ name: 'Polyglot Book', extensions: ['bin'] }] });
-                                        if (selected && typeof selected === 'string') onUpdateOpening({...opening, book_path: selected});
-                                    }} className="bg-gray-600 px-3 rounded hover:bg-gray-500">Browse...</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="space-y-4">
-                            <h4 className="font-bold text-lg text-green-400 border-b border-gray-700 pb-2">Adjudication</h4>
-
-                            <div className="bg-gray-900/40 p-3 rounded border border-gray-700">
-                                <h5 className="font-bold text-sm text-gray-300 mb-2">Draw Adjudication</h5>
-                                <div className="grid grid-cols-2 gap-3 text-sm">
-                                    <label>Move Number:</label>
-                                    <input type="number" className="bg-gray-700 rounded p-1 w-full"
-                                           value={adjudication.draw_move_number || 40}
-                                           onChange={e => onUpdateAdjudication({...adjudication, draw_move_number: parseInt(e.target.value)})} />
-
-                                    <label>Move Count:</label>
-                                    <input type="number" className="bg-gray-700 rounded p-1 w-full"
-                                           value={adjudication.draw_move_count || 20}
-                                           onChange={e => onUpdateAdjudication({...adjudication, draw_move_count: parseInt(e.target.value)})} />
-
-                                    <label>Score (cp):</label>
-                                    <input type="number" className="bg-gray-700 rounded p-1 w-full"
-                                           value={adjudication.draw_score || 5}
-                                           onChange={e => onUpdateAdjudication({...adjudication, draw_score: parseInt(e.target.value)})} />
-                                </div>
-                            </div>
-
-                            <div className="bg-gray-900/40 p-3 rounded border border-gray-700">
-                                <h5 className="font-bold text-sm text-gray-300 mb-2">Resign Adjudication</h5>
-                                <div className="grid grid-cols-2 gap-3 text-sm">
-                                    <label>Move Count:</label>
-                                    <input type="number" className="bg-gray-700 rounded p-1 w-full"
-                                           value={adjudication.resign_move_count || 5}
-                                           onChange={e => onUpdateAdjudication({...adjudication, resign_move_count: parseInt(e.target.value)})} />
-
-                                    <label>Score (cp):</label>
-                                    <input type="number" className="bg-gray-700 rounded p-1 w-full"
-                                           value={adjudication.resign_score || 600}
-                                           onChange={e => onUpdateAdjudication({...adjudication, resign_score: parseInt(e.target.value)})} />
-                                </div>
-                            </div>
-
-                             <label className="flex items-center gap-2 text-sm text-gray-300 mt-2">
-                                <input type="checkbox" checked={adjudication.result_adjudication}
-                                       onChange={e => onUpdateAdjudication({...adjudication, result_adjudication: e.target.checked})} />
-                                TB / Syzygy Adjudication
-                             </label>
-
-                             <div>
-                                 <label className="block text-xs text-gray-400 mb-1">Syzygy tablebases path</label>
-                                 <div className="flex gap-2">
-                                     <input className="flex-1 bg-gray-700 border border-gray-600 rounded p-2 text-xs"
-                                            value={adjudication.syzygy_path || ""} readOnly placeholder="No path selected" />
-                                     <button onClick={async () => {
-                                         const selected = await open({ directory: true });
-                                         if (selected && typeof selected === 'string') {
-                                             onUpdateAdjudication({ ...adjudication, syzygy_path: selected });
-                                         }
-                                     }} className="bg-gray-600 px-3 rounded hover:bg-gray-500">Browse...</button>
-                                 </div>
-                             </div>
-                        </div>
-                    </div>
-                )}
-
                 {activeTab === 'tournaments' && (
                     <div className="space-y-6">
-                        <div className="grid grid-cols-2 gap-6">
-                            <div className="space-y-4">
-                                <h4 className="font-bold text-lg text-blue-400 border-b border-gray-700 pb-2">Tournament Format</h4>
-                                <div>
-                                    <label className="block text-xs text-gray-400 mb-1">Mode</label>
-                                    <select
-                                        className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
-                                        value={tournamentSettings.mode}
-                                        onChange={e => updateTournament({ mode: e.target.value as TournamentSettings['mode'] })}
-                                    >
-                                        <option value="Match">Match</option>
-                                        <option value="RoundRobin">Round Robin</option>
-                                        <option value="Gauntlet">Gauntlet</option>
-                                        <option value="Swiss">Swiss</option>
-                                    </select>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs text-gray-400 mb-1">Games Count</label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
-                                            value={tournamentSettings.gamesCount}
-                                            onChange={e => updateTournament({ gamesCount: parseInt(e.target.value, 10) || 1 })}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs text-gray-400 mb-1">Concurrency</label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
-                                            value={tournamentSettings.concurrency}
-                                            onChange={e => updateTournament({ concurrency: parseInt(e.target.value, 10) || 1 })}
-                                        />
-                                        <p className="text-[11px] text-gray-500 mt-1">
-                                            You can adjust concurrency while a tournament is running.
-                                        </p>
-                                    </div>
-                                </div>
-                                <label className="flex items-center gap-2 text-sm text-gray-300">
-                                    <input
-                                        type="checkbox"
-                                        checked={tournamentSettings.swapSides}
-                                        onChange={e => updateTournament({ swapSides: e.target.checked })}
-                                    />
-                                    Swap sides each game
-                                </label>
+                        <div className="flex items-start justify-between">
+                            <div>
+                                <h3 className="text-2xl font-bold text-white">Tournament Manager</h3>
+                                <p className="text-sm text-gray-400">
+                                    Set up a quick test or a full tournament before the first game starts.
+                                </p>
                             </div>
-
-                            <div className="space-y-4">
-                                <h4 className="font-bold text-lg text-green-400 border-b border-gray-700 pb-2">Time Control</h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs text-gray-400 mb-1">Base (sec)</label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
-                                            value={Math.round(tournamentSettings.timeControl.baseMs / 1000)}
-                                            onChange={e => updateTournament({
-                                                timeControl: {
-                                                    ...tournamentSettings.timeControl,
-                                                    baseMs: (parseFloat(e.target.value) || 1) * 1000,
-                                                },
-                                            })}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs text-gray-400 mb-1">Increment (sec)</label>
-                                        <input
-                                            type="number"
-                                            min={0}
-                                            step={0.1}
-                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
-                                            value={tournamentSettings.timeControl.incMs / 1000}
-                                            onChange={e => updateTournament({
-                                                timeControl: {
-                                                    ...tournamentSettings.timeControl,
-                                                    incMs: (parseFloat(e.target.value) || 0) * 1000,
-                                                },
-                                            })}
-                                        />
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="block text-xs text-gray-400 mb-1">Event Name</label>
-                                    <input
-                                        className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
-                                        value={tournamentSettings.eventName}
-                                        onChange={e => updateTournament({ eventName: e.target.value })}
-                                        placeholder="CCRL GUI Tournament"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs text-gray-400 mb-1">PGN Output Path</label>
-                                    <input
-                                        className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
-                                        value={tournamentSettings.pgnPath}
-                                        onChange={e => updateTournament({ pgnPath: e.target.value })}
-                                        placeholder="tournament.pgn"
-                                    />
-                                </div>
+                            <div className="text-right text-xs text-gray-400">
+                                <div className="font-semibold text-gray-300">Ready check</div>
+                                <div>{engines.length} engine{engines.length === 1 ? '' : 's'} configured</div>
                             </div>
                         </div>
 
-                        <div className="bg-gray-900/40 p-4 rounded border border-gray-700 space-y-4">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h4 className="font-bold text-lg text-purple-300">SPRT</h4>
-                                    <p className="text-xs text-gray-400">Stop early when the SPRT decision reaches Accept/Reject.</p>
-                                </div>
+                        <div className="grid grid-cols-3 gap-6">
+                            <div className="col-span-2 space-y-6">
+                                <section className="bg-gray-900/40 p-4 rounded border border-gray-700 space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="font-bold text-lg text-blue-400">Basics</h4>
+                                        <label className="flex items-center gap-2 text-sm text-gray-300">
+                                            <input
+                                                type="checkbox"
+                                                checked={tournamentSettings.swapSides}
+                                                onChange={e => updateTournament({ swapSides: e.target.checked })}
+                                            />
+                                            Swap sides each game
+                                        </label>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs text-gray-400 mb-1">Event Name</label>
+                                            <input
+                                                className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
+                                                value={tournamentSettings.eventName}
+                                                onChange={e => updateTournament({ eventName: e.target.value })}
+                                                placeholder="Test run vs. nightly builds"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-gray-400 mb-1">Mode</label>
+                                            <select
+                                                className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                                value={tournamentSettings.mode}
+                                                onChange={e => updateTournament({ mode: e.target.value as TournamentSettings['mode'] })}
+                                            >
+                                                <option value="Match">Match</option>
+                                                <option value="RoundRobin">Round Robin</option>
+                                                <option value="Gauntlet">Gauntlet</option>
+                                                <option value="Swiss">Swiss</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-gray-400 mb-1">Games</label>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                                value={tournamentSettings.gamesCount}
+                                                onChange={e => updateTournament({ gamesCount: parseInt(e.target.value, 10) || 1 })}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-gray-400 mb-1">Concurrency</label>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                                value={tournamentSettings.concurrency}
+                                                onChange={e => updateTournament({ concurrency: parseInt(e.target.value, 10) || 1 })}
+                                            />
+                                            <p className="text-[11px] text-gray-500 mt-1">
+                                                Increase only if your machine can run multiple games.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section className="bg-gray-900/40 p-4 rounded border border-gray-700 space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="font-bold text-lg text-green-400">Time Control</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {[
+                                                { label: '1+0', baseMs: 60000, incMs: 0 },
+                                                { label: '3+1', baseMs: 180000, incMs: 1000 },
+                                                { label: '10+5', baseMs: 600000, incMs: 5000 },
+                                            ].map(preset => (
+                                                <button
+                                                    key={preset.label}
+                                                    type="button"
+                                                    onClick={() => updateTournament({ timeControl: { baseMs: preset.baseMs, incMs: preset.incMs } })}
+                                                    className="px-2 py-1 text-xs rounded border border-gray-600 text-gray-300 hover:bg-gray-700"
+                                                >
+                                                    {preset.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs text-gray-400 mb-1">Base (sec)</label>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                                value={Math.round(tournamentSettings.timeControl.baseMs / 1000)}
+                                                onChange={e => updateTournament({
+                                                    timeControl: {
+                                                        ...tournamentSettings.timeControl,
+                                                        baseMs: (parseFloat(e.target.value) || 1) * 1000,
+                                                    },
+                                                })}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-gray-400 mb-1">Increment (sec)</label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step={0.1}
+                                                className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                                value={tournamentSettings.timeControl.incMs / 1000}
+                                                onChange={e => updateTournament({
+                                                    timeControl: {
+                                                        ...tournamentSettings.timeControl,
+                                                        incMs: (parseFloat(e.target.value) || 0) * 1000,
+                                                    },
+                                                })}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">PGN Output Path</label>
+                                        <input
+                                            className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
+                                            value={tournamentSettings.pgnPath}
+                                            onChange={e => updateTournament({ pgnPath: e.target.value })}
+                                            placeholder="tournament.pgn"
+                                        />
+                                    </div>
+                                </section>
+
+                                <section className="bg-gray-900/40 p-4 rounded border border-gray-700 space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="font-bold text-lg text-blue-400">Games & Openings</h4>
+                                        <div>
+                                            <label className="block text-xs text-gray-400 mb-1">Variant</label>
+                                            <select
+                                                className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                                value={tournamentSettings.variant}
+                                                onChange={e => updateTournament({ variant: e.target.value as TournamentSettings['variant'] })}
+                                            >
+                                                <option value="standard">Standard</option>
+                                                <option value="chess960">Chess960</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-6">
+                                        <div className="space-y-4">
+                                            <h5 className="font-bold text-sm text-gray-300">Opening Suite</h5>
+                                            <div>
+                                                <label className="block text-xs text-gray-400 mb-1">FEN String</label>
+                                                <input
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
+                                                    placeholder="Paste FEN..."
+                                                    value={opening.fen || ""}
+                                                    onChange={e => onUpdateOpening({ ...opening, fen: e.target.value })}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs text-gray-400 mb-1">PGN / EPD File</label>
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        className="flex-1 bg-gray-700 border border-gray-600 rounded p-2 text-xs"
+                                                        value={opening.file || ""}
+                                                        readOnly
+                                                        placeholder="No file selected"
+                                                    />
+                                                    <button
+                                                        onClick={async () => {
+                                                            const selected = await open({ filters: [{ name: 'Openings', extensions: ['pgn', 'epd'] }] });
+                                                            if (selected && typeof selected === 'string') onUpdateOpening({ ...opening, file: selected });
+                                                        }}
+                                                        className="bg-gray-600 px-3 rounded hover:bg-gray-500"
+                                                    >
+                                                        Browse...
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="block text-xs text-gray-400 mb-1">Book Depth (Plies)</label>
+                                                    <input
+                                                        type="number"
+                                                        className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                                        value={opening.depth || 0}
+                                                        onChange={e => onUpdateOpening({ ...opening, depth: parseInt(e.target.value) || 0 })}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs text-gray-400 mb-1">Order</label>
+                                                    <select
+                                                        className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                                        value={opening.order || "sequential"}
+                                                        onChange={e => onUpdateOpening({ ...opening, order: e.target.value })}
+                                                    >
+                                                        <option value="sequential">Sequential</option>
+                                                        <option value="random">Random</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs text-gray-400 mb-1">Opening Book (Polyglot)</label>
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        className="flex-1 bg-gray-700 border border-gray-600 rounded p-2 text-xs"
+                                                        value={opening.book_path || ""}
+                                                        readOnly
+                                                        placeholder="No .bin book selected"
+                                                    />
+                                                    <button
+                                                        onClick={async () => {
+                                                            const selected = await open({ filters: [{ name: 'Polyglot Book', extensions: ['bin'] }] });
+                                                            if (selected && typeof selected === 'string') onUpdateOpening({ ...opening, book_path: selected });
+                                                        }}
+                                                        className="bg-gray-600 px-3 rounded hover:bg-gray-500"
+                                                    >
+                                                        Browse...
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            <h5 className="font-bold text-sm text-gray-300">Adjudication</h5>
+                                            <div className="bg-gray-900/40 p-3 rounded border border-gray-700">
+                                                <h6 className="font-bold text-xs text-gray-300 mb-2">Draw Adjudication</h6>
+                                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                                    <label>Move Number:</label>
+                                                    <input
+                                                        type="number"
+                                                        className="bg-gray-700 rounded p-1 w-full"
+                                                        value={adjudication.draw_move_number || 40}
+                                                        onChange={e => onUpdateAdjudication({ ...adjudication, draw_move_number: parseInt(e.target.value) })}
+                                                    />
+
+                                                    <label>Move Count:</label>
+                                                    <input
+                                                        type="number"
+                                                        className="bg-gray-700 rounded p-1 w-full"
+                                                        value={adjudication.draw_move_count || 20}
+                                                        onChange={e => onUpdateAdjudication({ ...adjudication, draw_move_count: parseInt(e.target.value) })}
+                                                    />
+
+                                                    <label>Score (cp):</label>
+                                                    <input
+                                                        type="number"
+                                                        className="bg-gray-700 rounded p-1 w-full"
+                                                        value={adjudication.draw_score || 5}
+                                                        onChange={e => onUpdateAdjudication({ ...adjudication, draw_score: parseInt(e.target.value) })}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-gray-900/40 p-3 rounded border border-gray-700">
+                                                <h6 className="font-bold text-xs text-gray-300 mb-2">Resign Adjudication</h6>
+                                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                                    <label>Move Count:</label>
+                                                    <input
+                                                        type="number"
+                                                        className="bg-gray-700 rounded p-1 w-full"
+                                                        value={adjudication.resign_move_count || 5}
+                                                        onChange={e => onUpdateAdjudication({ ...adjudication, resign_move_count: parseInt(e.target.value) })}
+                                                    />
+
+                                                    <label>Score (cp):</label>
+                                                    <input
+                                                        type="number"
+                                                        className="bg-gray-700 rounded p-1 w-full"
+                                                        value={adjudication.resign_score || 600}
+                                                        onChange={e => onUpdateAdjudication({ ...adjudication, resign_score: parseInt(e.target.value) })}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <label className="flex items-center gap-2 text-sm text-gray-300">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={adjudication.result_adjudication}
+                                                    onChange={e => onUpdateAdjudication({ ...adjudication, result_adjudication: e.target.checked })}
+                                                />
+                                                TB / Syzygy Adjudication
+                                            </label>
+
+                                            <div>
+                                                <label className="block text-xs text-gray-400 mb-1">Syzygy tablebases path</label>
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        className="flex-1 bg-gray-700 border border-gray-600 rounded p-2 text-xs"
+                                                        value={adjudication.syzygy_path || ""}
+                                                        readOnly
+                                                        placeholder="No path selected"
+                                                    />
+                                                    <button
+                                                        onClick={async () => {
+                                                            const selected = await open({ directory: true });
+                                                            if (selected && typeof selected === 'string') {
+                                                                onUpdateAdjudication({ ...adjudication, syzygy_path: selected });
+                                                            }
+                                                        }}
+                                                        className="bg-gray-600 px-3 rounded hover:bg-gray-500"
+                                                    >
+                                                        Browse...
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
+
+                            <aside className="space-y-6">
+                                <section className="bg-gray-900/40 p-4 rounded border border-gray-700 space-y-3">
+                                    <h4 className="font-bold text-lg text-purple-300">Engines</h4>
+                                    <p className="text-xs text-gray-400">
+                                        Add at least two engines for head-to-head testing.
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={runEngineCheck}
+                                        disabled={engineCheckRunning || engines.length === 0}
+                                        className="w-full px-3 py-2 text-xs font-semibold rounded border border-gray-600 text-gray-200 hover:bg-gray-700 disabled:opacity-60"
+                                    >
+                                        {engineCheckRunning ? 'Checking engines…' : 'Run quick engine check'}
+                                    </button>
+                                    <div className="space-y-2 max-h-40 overflow-auto">
+                                        {engines.length === 0 && (
+                                            <div className="text-xs text-gray-500">No engines configured yet.</div>
+                                        )}
+                                        {engines.map(engine => (
+                                            <div key={engine.id || engine.name} className="flex items-center gap-2 text-sm text-gray-200">
+                                                {engine.logo_path ? (
+                                                    <img
+                                                        src={`https://asset.localhost/${engine.logo_path}`}
+                                                        className="w-5 h-5 object-contain"
+                                                    />
+                                                ) : (
+                                                    <div className="w-5 h-5 rounded-full bg-gray-700 text-[10px] flex items-center justify-center">
+                                                        ?
+                                                    </div>
+                                                )}
+                                                <span className="truncate">{engine.name}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {engineCheckResults.length > 0 && (
+                                        <div className="space-y-2">
+                                            {engineCheckResults.map(result => (
+                                                <div
+                                                    key={result.id}
+                                                    className={`text-xs rounded border px-2 py-1 ${
+                                                        result.ok
+                                                            ? 'border-emerald-700/60 text-emerald-200 bg-emerald-900/20'
+                                                            : 'border-rose-700/60 text-rose-200 bg-rose-900/20'
+                                                    }`}
+                                                >
+                                                    <div className="font-semibold">
+                                                        {result.ok ? 'OK' : 'Failed'} · {result.name}
+                                                    </div>
+                                                    {!result.ok && result.message && (
+                                                        <div className="text-[11px] text-rose-200/80 mt-1 break-words">
+                                                            {result.message}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {engines.length < 2 && (
+                                        <div className="text-xs text-amber-300 bg-amber-900/20 border border-amber-700/60 rounded p-2">
+                                            Add another engine in the <span className="font-semibold">Engines</span> tab to start a match.
+                                        </div>
+                                    )}
+                                </section>
+
+                                <section className="bg-gray-900/40 p-4 rounded border border-gray-700 space-y-2">
+                                    <h4 className="font-bold text-lg text-red-300">Troubleshooting</h4>
+                                    <ul className="text-xs text-gray-400 list-disc list-inside space-y-1">
+                                        <li>Verify the engine executable path and protocol (UCI/XBoard).</li>
+                                        <li>Use "Detect Options" to confirm the engine responds.</li>
+                                        <li>Make sure the engine runs from a terminal outside the GUI.</li>
+                                        <li>Check for blocked permissions or antivirus prompts.</li>
+                                    </ul>
+                                </section>
+                            </aside>
+                        </div>
+
+                        <details className="bg-gray-900/40 p-4 rounded border border-gray-700">
+                            <summary className="cursor-pointer font-bold text-lg text-gray-200">Advanced: SPRT</summary>
+                            <p className="text-xs text-gray-400 mt-2">
+                                Stop early when the SPRT decision reaches Accept/Reject.
+                            </p>
+                            <div className="flex items-center justify-between mt-3">
                                 <label className="flex items-center gap-2 text-sm text-gray-300">
                                     <input
                                         type="checkbox"
@@ -636,7 +845,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             </div>
 
                             {tournamentSettings.sprt.enabled && (
-                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div className="grid grid-cols-2 gap-4 text-sm mt-4">
                                     <div>
                                         <label className="block text-xs text-gray-400 mb-1">H0 Elo</label>
                                         <input
@@ -703,13 +912,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                     </div>
                                 </div>
                             )}
-                        </div>
+                        </details>
                     </div>
                 )}
             </div>
 
             {/* Footer */}
-            <div className="bg-gray-900 p-4 border-t border-gray-700 flex justify-end">
+            <div className="bg-gray-900 p-4 border-t border-gray-700 flex justify-end gap-3">
+                {activeTab === 'tournaments' && onStartMatch && (
+                    <button
+                        onClick={() => {
+                            onStartMatch();
+                            onClose();
+                        }}
+                        className="px-6 py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded"
+                    >
+                        Start Match
+                    </button>
+                )}
                 <button onClick={onClose} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded">
                     Done
                 </button>

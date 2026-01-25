@@ -7,7 +7,7 @@ import SettingsModal from './components/SettingsModal';
 import StatsPanel from './components/StatsPanel';
 import BottomPanel from './components/BottomPanel';
 import EvalMovePanel from './components/EvalMovePanel';
-import { Settings, Play, Square } from 'lucide-react';
+import { Settings, Square } from 'lucide-react';
 
 // --- Types --- (Centralize these in types.ts later)
 export interface GameUpdate {
@@ -160,6 +160,7 @@ function App() {
   const [errors, setErrors] = useState<any[]>([]);
   const [activeBottomTab, setActiveBottomTab] = useState('standings');
   const [matchActive, setMatchActive] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'general' | 'engines' | 'tournaments'>('engines');
 
   // Preferences
   const [prefHighlight, setPrefHighlight] = useState(localStorage.getItem('pref_highlight_legal') === 'true');
@@ -349,6 +350,8 @@ function App() {
         <SettingsModal
             isOpen={isSettingsOpen}
             onClose={() => setIsSettingsOpen(false)}
+            initialTab={settingsTab}
+            onStartMatch={startMatch}
             engines={engines} onUpdateEngines={setEngines}
             adjudication={adjudication} onUpdateAdjudication={setAdjudication}
             opening={opening} onUpdateOpening={setOpening}
@@ -364,16 +367,18 @@ function App() {
                     <span className="text-blue-500">CCRL</span> GUI
                 </div>
                 <div className="flex gap-2">
-                    {!matchActive ? (
-                        <button onClick={startMatch} className="bg-green-600 hover:bg-green-500 px-4 py-1.5 rounded flex items-center gap-2 font-bold text-sm">
-                            <Play size={16}/> Start Match
-                        </button>
-                    ) : (
+                    {matchActive && (
                         <button onClick={stopMatch} className="bg-red-600 hover:bg-red-500 px-4 py-1.5 rounded flex items-center gap-2 font-bold text-sm">
                             <Square size={16}/> Stop
                         </button>
                     )}
-                    <button onClick={() => setIsSettingsOpen(true)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-gray-300">
+                    <button
+                        onClick={() => {
+                            setSettingsTab('engines');
+                            setIsSettingsOpen(true);
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-gray-300"
+                    >
                         <Settings size={18}/>
                     </button>
                 </div>
