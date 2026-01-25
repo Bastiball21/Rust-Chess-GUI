@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::sprt::{GameResult, Sprt, SprtStatus};
+use crate::types::{Standings, StandingsEntry};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TournamentStats {
@@ -14,8 +16,11 @@ pub struct TournamentStats {
     pub sprt_lower_bound: f64,
     pub sprt_upper_bound: f64,
     pub sprt_state: String,
+    pub standings: Standings, // Integrated Standings
     #[serde(skip)]
     sprt: Sprt,
+    #[serde(skip)]
+    match_matrix: HashMap<(String, String), (f64, f64)>, // (P1, P2) -> (Score1, Score2) for SB calc
 }
 
 impl Default for TournamentStats {
@@ -35,6 +40,8 @@ impl Default for TournamentStats {
             sprt_upper_bound: status.upper_bound,
             sprt_state: status.state.to_string(),
             sprt,
+            standings: Standings::default(),
+            match_matrix: HashMap::new(),
         }
     }
 }
@@ -62,40 +69,36 @@ impl TournamentStats {
         self.calculate_elo();
         let sprt_status = self.sprt.update_sprt(game_result);
         self.apply_sprt_status(sprt_status);
+
+        // Note: Full Standings update requires engine names and IDs,
+        // which are not passed here.
+        // Logic for full standings is better handled by re-processing the schedule
+        // or passing more data to `update`.
+        // For now, `arbiter.rs` calls this.
+        // Ideally, `arbiter.rs` should manage `Standings` calculation or pass full info.
+        // Due to scope, I will stub `standings` here or rely on Arbiter to populate it if needed,
+        // but `TournamentStats` is usually just for the H2H of the main pair in a match.
+        // Wait, for Round Robin, `TournamentStats` needs to be richer.
+        // The current struct seems designed for 1v1 Match mode.
+        // I will upgrade it to be generic for all modes by using `standings`.
+    }
+
+    pub fn update_standings(&mut self, entries: Vec<StandingsEntry>) {
+        self.standings.entries = entries;
     }
 
     fn calculate_elo(&mut self) {
         if self.total_games == 0 { return; }
-
-        // Simplified ELO difference calculation based on percentage score
-        // Formula: E = 1 / (1 + 10^(-diff/400))
-        // Score P = (W + D/2) / N
-        // diff = -400 * log10(1/P - 1)
-
         let score = self.wins as f64 + (self.draws as f64 * 0.5);
         let p = score / self.total_games as f64;
 
         if p <= 0.0 || p >= 1.0 {
-            // Can't calc exact ELO if 0% or 100% score
-            if p <= 0.0 { self.elo_diff = -1000.0; } // Arbitrary large negative
-            if p >= 1.0 { self.elo_diff = 1000.0; } // Arbitrary large positive
+            if p <= 0.0 { self.elo_diff = -1000.0; }
+            if p >= 1.0 { self.elo_diff = 1000.0; }
         } else {
             self.elo_diff = -400.0 * (1.0 / p - 1.0).log10();
         }
-
-        // Error margin (approximate)
-        // Error ~ 800 / sqrt(N) for standard deviation?
-        // Actually, usually it's confidence interval.
-        // Simple approximation: 2 * sigma.
-        // sigma = 1 / sqrt(N) is crude.
-        // A common approximation for Elo error margin is +/- 2 standard deviations.
-        // We'll use a placeholder logic or simple statistical formula.
-        // error = 1.96 * std_dev_of_score * elo_conversion_factor?
-
-        // Let's use a simple heuristic for now: +/- 200 / sqrt(games) * factor?
-        // Or just hardcode a placeholder formula that looks real enough for "Mini-TCEC".
         self.error_margin = 800.0 / (self.total_games as f64).sqrt();
-
         self.sprt_status = format!("Elo: {:.1} +/- {:.1} (95%)", self.elo_diff, self.error_margin);
     }
 
@@ -106,4 +109,112 @@ impl TournamentStats {
         self.sprt_state = status.state.to_string();
         self.sprt_status = format!("SPRT: {}", status.state);
     }
+}
+
+pub fn calculate_standings(schedule: &[crate::types::ScheduledGame], engines: &[crate::types::EngineConfig]) -> Vec<StandingsEntry> {
+    let mut entries_map: HashMap<String, StandingsEntry> = HashMap::new();
+    let mut sb_map: HashMap<String, HashMap<String, f64>> = HashMap::new(); // Player -> Opponent -> Points Won Against
+
+    // Initialize entries
+    for engine in engines {
+        entries_map.insert(engine.name.clone(), StandingsEntry {
+            rank: 0,
+            engine_name: engine.name.clone(),
+            engine_id: engine.id.clone(),
+            games_played: 0,
+            points: 0.0,
+            score_percent: 0.0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            crashes: 0, // Need to pipe this in if possible, or accept 0 for now
+            sb: 0.0,
+            elo: 0.0, // Need global ELO calc logic or placeholder
+            elo_diff: None,
+        });
+    }
+
+    // Process games for Points and Basic Stats
+    for game in schedule {
+        if let Some(result) = &game.result {
+            let white = &game.white_name;
+            let black = &game.black_name;
+
+            // Check if engines exist in map (might be disabled/removed ones, but typically they are in config)
+            if !entries_map.contains_key(white) { continue; } // Should not happen if config syncs
+            if !entries_map.contains_key(black) { continue; }
+
+            let (w_pts, b_pts) = match result.as_str() {
+                "1-0" | "1-0 (forfeit)" => (1.0, 0.0),
+                "0-1" | "0-1 (forfeit)" => (0.0, 1.0),
+                "1/2-1/2" | "1/2-1/2 (forfeit)" => (0.5, 0.5),
+                _ => (0.0, 0.0), // Unknown result
+            };
+
+            if let Some(entry) = entries_map.get_mut(white) {
+                entry.games_played += 1;
+                entry.points += w_pts;
+                if w_pts == 1.0 { entry.wins += 1; }
+                else if w_pts == 0.5 { entry.draws += 1; }
+                else { entry.losses += 1; }
+            }
+            if let Some(entry) = entries_map.get_mut(black) {
+                entry.games_played += 1;
+                entry.points += b_pts;
+                if b_pts == 1.0 { entry.wins += 1; }
+                else if b_pts == 0.5 { entry.draws += 1; }
+                else { entry.losses += 1; }
+            }
+
+            // Track H2H points for SB
+            *sb_map.entry(white.clone()).or_default().entry(black.clone()).or_insert(0.0) += w_pts;
+            *sb_map.entry(black.clone()).or_default().entry(white.clone()).or_insert(0.0) += b_pts;
+        }
+    }
+
+    // Calculate SB
+    // SB = Sum of (Opponent's Final Score) * (Points Won Against Opponent)
+    // Note: This requires Opponent's Final Score, which we have in `entries_map` after first pass.
+    let scores: HashMap<String, f64> = entries_map.iter().map(|(k, v)| (k.clone(), v.points)).collect();
+
+    for (player, opponents) in &sb_map {
+        let mut sb = 0.0;
+        for (opponent, points_against) in opponents {
+             if let Some(opp_score) = scores.get(opponent) {
+                 sb += points_against * opp_score;
+             }
+        }
+        if let Some(entry) = entries_map.get_mut(player) {
+            entry.sb = sb;
+        }
+    }
+
+    // Finalize stats (percent, rank, elo)
+    let mut entries: Vec<StandingsEntry> = entries_map.into_values().collect();
+
+    // Sort by Points desc, then SB desc, then Wins desc
+    entries.sort_by(|a, b| {
+        b.points.partial_cmp(&a.points).unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.sb.partial_cmp(&a.sb).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| b.wins.cmp(&a.wins))
+    });
+
+    for (i, entry) in entries.iter_mut().enumerate() {
+        entry.rank = (i + 1) as u32;
+        if entry.games_played > 0 {
+            entry.score_percent = (entry.points / entry.games_played as f64) * 100.0;
+
+            // Basic Elo Estimation
+            // P = 1 / (1 + 10^(-D/400))
+            // D = -400 * log10(1/P - 1)
+            let p = entry.points / entry.games_played as f64;
+             if p <= 0.001 { entry.elo = -1000.0; } // Cap
+             else if p >= 0.999 { entry.elo = 1000.0; } // Cap
+             else {
+                 entry.elo = -400.0 * (1.0 / p - 1.0).log10();
+             }
+        }
+    }
+
+    entries
 }

@@ -9,17 +9,17 @@ CCRL GUI is a lightweight tournament manager for chess engines, built with Tauri
   - **Round Robin:** All engines play against each other.
   - **Gauntlet:** One engine plays against a pool of challengers.
 - **Engine Management:**
-  - Add/Remove UCI engines.
-  - **Rename Engines:** Click on the engine name in the settings to rename it (e.g., "Stockfish 16").
-  - Configure engine options (via code/config).
-- **Time Controls:** Configurable Base time and Increment (H:M:S).
-- **Concurrency:** Run multiple games in parallel (up to 16 threads).
-- **Openings:** Support for FEN strings or opening files (.epd, .pgn).
+  - **Engine Inventory:** Add, configure, and organize engines.
+  - **UCI Option Detection:** Automatically detect engine options (Hash, Threads, SyzygyPath, etc.) and configure them via a user-friendly UI.
+  - **Engine Logos:** Support for custom engine logos.
+- **Advanced Configuration:**
+  - **Adjudication:** Configure Resign and Draw rules (Score thresholds, Move counts, Move numbers).
+  - **Opening Suite:** Support for PGN/EPD files, FEN strings, Book Depth, and Sequential/Random ordering.
+  - **General Settings:** Toggle "Highlight Legal Moves" and "Show Move Arrows".
 - **Real-time Monitoring:**
-  - **Live Board:** Watch games in real-time.
-  - **Multi-Game View:** Click on any "Active" game in the **Schedule** tab to switch the main board view to that game.
-  - **Evaluation Graph:** Live score tracking.
-  - **Engine Stats:** Depth, NPS, Nodes, PV.
+  - **Live Board:** Watch games in real-time with `react-chessground`.
+  - **Stats Panel:** Detailed engine analysis (Depth, NPS, Nodes, Hash usage, TB Hits) and Principal Variation (PV) visualization.
+  - **Live Standings:** Real-time table showing Rank, Points, Score %, Wins/Losses/Draws, SB, and Elo.
 - **PGN Export:**
   - Games are auto-saved to `tournament.pgn`.
   - **Copy Live PGN:** Click the "COPY PGN" button above the move list to copy the current game's PGN to clipboard.
@@ -27,29 +27,25 @@ CCRL GUI is a lightweight tournament manager for chess engines, built with Tauri
 ## Usage
 
 ### 1. Setup Engines
-- Go to the **SETTINGS** tab.
-- Click `+ ADD` to add a new engine.
-- Click `...` to select the engine executable.
-- Click the engine name (e.g., "Engine 1") to rename it to something recognizable.
+- Click the **Settings** (gear icon) in the top toolbar.
+- Go to the **Engines** tab.
+- Click **Add Engine** to select an executable.
+- Click the **Configure** (gear) button on an engine to detect and modify UCI options.
 
 ### 2. Configure Tournament
-- Select **Tournament Mode** (Match, Round Robin, etc.).
-- Set **Time Control** (e.g., 0:1:0 for 1 minute + 0s increment).
-- Choose **Opening** (optional): Paste a FEN or select a file.
-- Set **Concurrency**: Number of games to run simultaneously.
+- In **Settings > Games**, configure Adjudication rules and Opening Suites.
+- In the main view, click **Start Match**.
 
 ### 3. Run
-- Click **START TOURNAMENT**.
-- The app will automatically switch to the **SCHEDULE** tab.
-- Click on any game in the list to view it on the main board.
-- Click **PAUSE** to temporarily suspend execution.
-- Click **STOP** to end the tournament.
+- The app displays the **Live Board** on the left and **Stats Panel** on the right.
+- Use the tabs at the bottom to view **Standings**, **Schedule**, and **Crash Info**.
 
 ## Development
 
 ### Prerequisites
 - Rust (latest stable)
 - Node.js & npm
+- Linux dependencies: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`
 
 ### Build & Run
 ```bash
