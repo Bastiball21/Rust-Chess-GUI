@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use futures::FutureExt;
 use tokio::sync::mpsc;
 use crate::arbiter::Arbiter;
-use crate::types::{TournamentConfig, GameUpdate, EngineStats, ScheduledGame, TournamentError, TournamentResumeState};
+use crate::types::{TournamentConfig, GameUpdate, EngineStats, ScheduledGame, TournamentError, TournamentResumeState, UciOption};
 use crate::stats::TournamentStats;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -319,6 +319,11 @@ async fn export_tournament_pgn(source_path: String, destination_path: String) ->
     Ok(())
 }
 
+#[tauri::command]
+async fn query_engine_options(path: String) -> Result<Vec<UciOption>, String> {
+    uci::query_engine_options(&path).await.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -355,7 +360,8 @@ pub fn run() {
             get_saved_tournament,
             discard_saved_tournament,
             resume_match,
-            export_tournament_pgn
+            export_tournament_pgn,
+            query_engine_options
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

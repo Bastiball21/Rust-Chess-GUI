@@ -6,6 +6,7 @@ use tokio::sync::broadcast;
 use anyhow::{Result, Context};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::types::UciOption;
 
 #[derive(Clone, Debug)]
 pub struct EngineInfo {
@@ -137,4 +138,133 @@ impl AsyncEngine {
         let _ = self.kill_tx.send(()).await;
         Ok(())
     }
+}
+
+pub async fn query_engine_options(path: &str) -> Result<Vec<UciOption>> {
+    let engine = AsyncEngine::spawn(path).await?;
+    let mut rx = engine.stdout_broadcast.subscribe();
+
+    engine.send("uci".to_string()).await?;
+
+    let mut options = Vec::new();
+    let mut uciok = false;
+
+    // Timeout logic could be added here, currently relies on engine responsiveness
+    // Adding a timeout wrapper around the loop would be safer
+    let timeout = tokio::time::sleep(tokio::time::Duration::from_secs(5));
+    tokio::pin!(timeout);
+
+    loop {
+        tokio::select! {
+            _ = &mut timeout => {
+                let _ = engine.kill().await;
+                return Err(anyhow::anyhow!("Timeout waiting for uciok"));
+            }
+            res = rx.recv() => {
+                match res {
+                    Ok(line) => {
+                        if line == "uciok" {
+                            uciok = true;
+                            break;
+                        }
+                        if line.starts_with("option name ") {
+                             if let Some(opt) = parse_uci_option(&line) {
+                                 options.push(opt);
+                             }
+                        }
+                    }
+                    Err(_) => {
+                        // Channel lag or closed
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = engine.quit().await;
+
+    if !uciok {
+        return Err(anyhow::anyhow!("Engine did not send uciok"));
+    }
+
+    Ok(options)
+}
+
+fn parse_uci_option(line: &str) -> Option<UciOption> {
+    // Format: option name <Name> type <Type> [default <Default>] [min <Min> max <Max>] [var <Var> var <Var>]
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    // Simplified parsing logic
+    // Finding indices of keywords
+    let name_idx = parts.iter().position(|&x| x == "name")?;
+    let type_idx = parts.iter().position(|&x| x == "type")?;
+
+    if type_idx <= name_idx { return None; }
+
+    let name = parts[name_idx+1..type_idx].join(" ");
+    let type_str = parts[type_idx+1];
+
+    let mut default_val = None;
+    let mut min_val = None;
+    let mut max_val = None;
+    let mut vars = Vec::new();
+
+    let mut i = type_idx + 2;
+    while i < parts.len() {
+        match parts[i] {
+            "default" => {
+                // Default might consume until next keyword or end
+                // But UCI is tricky. Usually default is single token unless string type
+                // Heuristic: consume until 'min', 'max', 'var' or end
+                let start = i + 1;
+                let mut end = start;
+                while end < parts.len() && !["min", "max", "var"].contains(&parts[end]) {
+                    end += 1;
+                }
+                if end > start {
+                    default_val = Some(parts[start..end].join(" "));
+                }
+                i = end;
+            },
+            "min" => {
+                if i + 1 < parts.len() {
+                    min_val = parts[i+1].parse::<i32>().ok();
+                }
+                i += 2;
+            },
+            "max" => {
+                if i + 1 < parts.len() {
+                    max_val = parts[i+1].parse::<i32>().ok();
+                }
+                i += 2;
+            },
+            "var" => {
+                // 'var' can appear multiple times for combos
+                // Value is usually remaining part? No, combos are: var x var y ...
+                // Actually combos are: option name Style type combo default Normal var Normal var Solid var Aggressive
+                // So 'var' is followed by a value string until next 'var' or end
+                 let start = i + 1;
+                 let mut end = start;
+                 while end < parts.len() && parts[end] != "var" {
+                     end += 1;
+                 }
+                 if end > start {
+                     vars.push(parts[start..end].join(" "));
+                 }
+                 i = end;
+            },
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    Some(UciOption {
+        name,
+        option_type: type_str.to_string(),
+        default: default_val,
+        min: min_val,
+        max: max_val,
+        var: vars,
+    })
 }

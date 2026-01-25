@@ -108,11 +108,11 @@ impl Arbiter {
         error_tx: mpsc::Sender<TournamentError>
     ) -> anyhow::Result<Self> {
         let mut openings = Vec::new();
-        if let Some(ref path) = config.opening_file {
+        if let Some(ref path) = config.opening.file {
             openings = load_openings(path)?;
         }
 
-        if let Some(order) = &config.opening_order {
+        if let Some(order) = &config.opening.order {
             if order == "random" {
                 let mut rng = rand::rng();
                 openings.shuffle(&mut rng);
@@ -651,7 +651,7 @@ impl Arbiter {
                 let start_fen = if !openings.is_empty() {
                     let idx = if config.swap_sides { (game.game_idx / 2) as usize } else { game.game_idx as usize };
                     openings[idx % openings.len()].clone()
-                } else if let Some(ref f) = config.opening_fen {
+                } else if let Some(ref f) = config.opening.fen {
                     if !f.trim().is_empty() { f.clone() } else { generate_start_fen(&config.variant) }
                 } else {
                     generate_start_fen(&config.variant)
@@ -686,6 +686,14 @@ impl Arbiter {
                             let mut stats = tourney_stats.lock().await;
                             let is_white_a = white_idx == 0;
                             stats.update(&result, is_white_a);
+
+                            // Re-calculate Standings from Schedule State
+                            // This is a bit heavy (O(N) where N is games), but safe for <10k games
+                            // Better than maintaining complex incremental state
+                            let schedule = schedule_state.lock().await.clone();
+                            let standings = crate::stats::calculate_standings(&schedule, &config.engines);
+                            stats.update_standings(standings);
+
                             let _ = tourney_stats_tx.send(stats.clone()).await;
                         }
                     }
@@ -977,7 +985,7 @@ async fn play_game_static(
 
     let mut consec_resign_moves = 0;
     let mut consec_draw_moves = 0;
-        let mut game_result;
+    let mut game_result;
     let mut repetition_counts: HashMap<String, u32> = HashMap::new();
     let mut halfmove_clock: u32 = start_fen
         .split_whitespace()
@@ -996,9 +1004,9 @@ async fn play_game_static(
         }
         if *is_paused.lock().await { sleep(Duration::from_millis(100)).await; continue; }
 
+        let current_move_num = (moves_history.len() / 2) + 1;
+
         // Material Draw Adjudication (Strict K vs K or Insufficient Material)
-        // We strictly check for *insufficient material* to avoid drawing winning K+P positions.
-        // If is_insufficient_material() is not available, we default to "Only Kings" (no pawns, no other pieces).
         let material_draw = match &pos {
              Board::Standard(b) => b.is_insufficient_material(),
              Board::Chess960(b) => b.is_insufficient_material(),
@@ -1008,7 +1016,7 @@ async fn play_game_static(
              game_result = "1/2-1/2".to_string();
              let _ = game_update_tx.send(GameUpdate {
                 fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
-                move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                move_number: current_move_num as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
                 game_id
             }).await;
             break;
@@ -1024,7 +1032,7 @@ async fn play_game_static(
             game_result = result_str.to_string();
             let _ = game_update_tx.send(GameUpdate {
                 fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
-                move_number: (moves_history.len() / 2 + 1) as u32, result: Some(result_str.to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                move_number: current_move_num as u32, result: Some(result_str.to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
                 game_id
             }).await;
             break;
@@ -1089,7 +1097,7 @@ async fn play_game_static(
                  game_result = match turn { Color::White => "0-1", Color::Black => "1-0" }.to_string();
                  let _ = game_update_tx.send(GameUpdate {
                     fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
-                    move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                    move_number: current_move_num as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
                     game_id
                 }).await;
                 break;
@@ -1100,7 +1108,7 @@ async fn play_game_static(
                  game_result = match turn { Color::White => "0-1", Color::Black => "1-0" }.to_string();
                  let _ = game_update_tx.send(GameUpdate {
                     fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,
-                    move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                    move_number: current_move_num as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
                     game_id
                 }).await;
                 break;
@@ -1115,15 +1123,23 @@ async fn play_game_static(
 
         // Adjudication Checks
         if let Some(score) = move_score {
-             if score.abs() > 1000 {
+             // Resign Adjudication
+             let resign_threshold = config.adjudication.resign_score.unwrap_or(1000);
+             let resign_count_limit = config.adjudication.resign_move_count.unwrap_or(5);
+
+             if score.abs() >= resign_threshold {
                  consec_resign_moves += 1;
              } else {
                  consec_resign_moves = 0;
              }
 
-             let move_num = (moves_history.len() / 2) + 1;
-             if move_num >= 40 {
-                 if score.abs() <= 5 {
+             // Draw Adjudication
+             let draw_threshold = config.adjudication.draw_score.unwrap_or(5); // +/- cp
+             let draw_start = config.adjudication.draw_move_number.unwrap_or(40);
+             let draw_count_limit = config.adjudication.draw_move_count.unwrap_or(20);
+
+             if current_move_num as u32 >= draw_start {
+                 if score.abs() <= draw_threshold {
                      consec_draw_moves += 1;
                  } else {
                      consec_draw_moves = 0;
@@ -1131,34 +1147,31 @@ async fn play_game_static(
              } else {
                  consec_draw_moves = 0;
              }
-        }
 
-        if consec_resign_moves >= 5 {
-             let result_str = if let Some(s) = move_score {
-                 if s > 0 {
+             if consec_resign_moves >= resign_count_limit {
+                 let result_str = if score > 0 {
                      match turn { Color::White => "1-0", Color::Black => "0-1" }
                  } else {
                      match turn { Color::White => "0-1", Color::Black => "1-0" }
-                 }
-             } else { "1/2-1/2" };
+                 };
+                 game_result = result_str.to_string();
+                 let _ = game_update_tx.send(GameUpdate {
+                    fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
+                    move_number: current_move_num as u32, result: Some(result_str.to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                    game_id
+                }).await;
+                break;
+             }
 
-             game_result = result_str.to_string();
-             let _ = game_update_tx.send(GameUpdate {
-                fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
-                move_number: (moves_history.len() / 2 + 1) as u32, result: Some(result_str.to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
-                game_id
-            }).await;
-            break;
-        }
-
-        if consec_draw_moves >= 20 {
-             game_result = "1/2-1/2".to_string();
-             let _ = game_update_tx.send(GameUpdate {
-                fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
-                move_number: (moves_history.len() / 2 + 1) as u32, result: Some("1/2-1/2".to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
-                game_id
-            }).await;
-            break;
+             if consec_draw_moves >= draw_count_limit {
+                 game_result = "1/2-1/2".to_string();
+                 let _ = game_update_tx.send(GameUpdate {
+                    fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
+                    move_number: current_move_num as u32, result: Some("1/2-1/2".to_string()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                    game_id
+                }).await;
+                break;
+             }
         }
 
         let parsed_move = match &mut pos {
@@ -1184,7 +1197,7 @@ async fn play_game_static(
                 game_result = "1/2-1/2".to_string();
                 let _ = game_update_tx.send(GameUpdate {
                     fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
-                    move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                    move_number: current_move_num as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
                     game_id
                 }).await;
                 break;
@@ -1198,7 +1211,7 @@ async fn play_game_static(
              }.to_string();
              let _ = game_update_tx.send(GameUpdate {
                 fen: pos.to_fen_string(), last_move: Some(best_move_str.clone()), white_time: white_time as u64, black_time: black_time as u64,
-                move_number: (moves_history.len() / 2 + 1) as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
+                move_number: current_move_num as u32, result: Some(game_result.clone()), white_engine_idx: white_idx, black_engine_idx: black_idx,
                 game_id
             }).await;
              break;
@@ -1206,7 +1219,7 @@ async fn play_game_static(
 
         let _ = game_update_tx.send(GameUpdate {
             fen: pos.to_fen_string(), last_move: Some(best_move_str), white_time: white_time as u64, black_time: black_time as u64,
-            move_number: (moves_history.len() / 2 + 1) as u32, result: None, white_engine_idx: white_idx, black_engine_idx: black_idx,
+            move_number: (current_move_num + 1) as u32, result: None, white_engine_idx: white_idx, black_engine_idx: black_idx,
             game_id
         }).await;
     }
@@ -1290,7 +1303,7 @@ fn parse_info(line: &str, engine_idx: usize) -> Option<EngineStats> {
             _ => {}
         }
     }
-    Some(EngineStats { depth, score_cp, score_mate, nodes, nps, pv, engine_idx, game_id: 0 }) // Placeholder 0, will be overwritten or context aware
+    Some(EngineStats { depth, score_cp, score_mate, nodes, nps, pv, engine_idx, game_id: 0, tb_hits: None, hash_full: None }) // Placeholder 0, will be overwritten or context aware
 }
 
 fn parse_info_with_id(line: &str, engine_idx: usize, game_id: usize) -> Option<EngineStats> {
