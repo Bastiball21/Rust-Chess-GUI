@@ -77,13 +77,14 @@ interface SprtSettings {
 }
 
 interface TournamentSettings {
-  mode: 'Match' | 'RoundRobin' | 'Gauntlet';
+  mode: 'Match' | 'RoundRobin' | 'Gauntlet' | 'Swiss';
   gamesCount: number;
   swapSides: boolean;
   concurrency: number;
   timeControl: { baseMs: number; incMs: number };
   eventName: string;
   pgnPath: string;
+  variant: 'standard' | 'chess960';
   sprt: SprtSettings;
 }
 
@@ -104,6 +105,7 @@ function App() {
       timeControl: { baseMs: 60000, incMs: 1000 },
       eventName: '',
       pgnPath: 'tournament.pgn',
+      variant: 'standard',
       sprt: {
           enabled: false,
           h0Elo: 0,
@@ -117,7 +119,15 @@ function App() {
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [engines, setEngines] = useState<EngineConfig[]>([]);
-  const [adjudication, setAdjudication] = useState({ resign_score: 600, resign_move_count: 5, draw_score: 5, draw_move_number: 40, draw_move_count: 20, result_adjudication: true });
+  const [adjudication, setAdjudication] = useState({
+      resign_score: 600,
+      resign_move_count: 5,
+      draw_score: 5,
+      draw_move_number: 40,
+      draw_move_count: 20,
+      result_adjudication: true,
+      syzygy_path: null,
+  });
   const [opening, setOpening] = useState({ file: null, fen: null, depth: 0, order: "sequential", book_path: null });
 
   // Tournament State
@@ -281,7 +291,7 @@ function App() {
                   games_count: tournamentSettings.gamesCount,
                   swap_sides: tournamentSettings.swapSides,
                   opening,
-                  variant: 'standard',
+                  variant: tournamentSettings.variant,
                   concurrency: tournamentSettings.concurrency > 0 ? tournamentSettings.concurrency : undefined,
                   adjudication,
                   sprt_enabled: tournamentSettings.sprt.enabled,
