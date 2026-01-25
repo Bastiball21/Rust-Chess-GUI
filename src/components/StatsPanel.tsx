@@ -60,7 +60,6 @@ const StatsPanel: React.FC<StatsPanelProps> = ({
 
   const activeColor = gameUpdate ? (gameUpdate.fen.split(' ')[1] === 'w' ? 'white' : 'black') : 'white';
   const activeStats = activeColor === 'white' ? whiteStats : blackStats;
-  const isWhite = activeColor === 'white';
   const pvRows = useMemo(() => {
       if (!activeStats?.pv || !gameUpdate?.fen) return [];
       return buildPvTable(activeStats.pv, gameUpdate.fen);

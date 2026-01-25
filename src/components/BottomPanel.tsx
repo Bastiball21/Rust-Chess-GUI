@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { StandingsEntry, ScheduledGame } from '../App';
-import { Trophy, List, AlertTriangle, Activity, FileText, Globe } from 'lucide-react';
+import { Trophy, List, AlertTriangle, Activity, FileText } from 'lucide-react';
 
 interface BottomPanelProps {
   standings: StandingsEntry[];
