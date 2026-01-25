@@ -61,6 +61,7 @@ interface TournamentSettings {
   pgnPath: string;
   variant: 'standard' | 'chess960';
   sprt: SprtSettings;
+  disabledEngineIds: string[];
 }
 
 interface SettingsModalProps {
@@ -282,6 +283,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       onUpdateTournamentSettings({ ...tournamentSettings, ...updates });
   };
 
+  const disabledEngineIds = tournamentSettings.disabledEngineIds ?? [];
+  const enabledEngines = engines.filter(engine => !disabledEngineIds.includes(engine.id ?? ''));
+
   useEffect(() => {
       if (isOpen && initialTab) {
           setActiveTab(initialTab);
@@ -293,10 +297,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   }, [engines]);
 
   const runEngineCheck = async () => {
-      if (engines.length === 0) return;
+      if (enabledEngines.length === 0) return;
       setEngineCheckRunning(true);
       const results: Array<{ id: string; name: string; ok: boolean; message?: string }> = [];
-      for (const engine of engines) {
+      for (const engine of enabledEngines) {
           try {
               await invoke<UciOption[]>('query_engine_options', { path: engine.path });
               results.push({ id: engine.id || engine.name, name: engine.name, ok: true });
@@ -440,7 +444,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             </div>
                             <div className="text-right text-xs text-gray-400">
                                 <div className="font-semibold text-gray-300">Ready check</div>
-                                <div>{engines.length} engine{engines.length === 1 ? '' : 's'} configured</div>
+                                <div>
+                                    {enabledEngines.length} of {engines.length} engine{engines.length === 1 ? '' : 's'} selected
+                                </div>
                             </div>
                         </div>
 
@@ -754,12 +760,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 <section className="bg-gray-900/40 p-4 rounded border border-gray-700 space-y-3">
                                     <h4 className="font-bold text-lg text-purple-300">Engines</h4>
                                     <p className="text-xs text-gray-400">
-                                        Add at least two engines for head-to-head testing.
+                                        Choose which installed engines to include in this tournament.
                                     </p>
                                     <button
                                         type="button"
                                         onClick={runEngineCheck}
-                                        disabled={engineCheckRunning || engines.length === 0}
+                                        disabled={engineCheckRunning || enabledEngines.length === 0}
                                         className="w-full px-3 py-2 text-xs font-semibold rounded border border-gray-600 text-gray-200 hover:bg-gray-700 disabled:opacity-60"
                                     >
                                         {engineCheckRunning ? 'Checking engines…' : 'Run quick engine check'}
@@ -768,21 +774,38 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                         {engines.length === 0 && (
                                             <div className="text-xs text-gray-500">No engines configured yet.</div>
                                         )}
-                                        {engines.map(engine => (
-                                            <div key={engine.id || engine.name} className="flex items-center gap-2 text-sm text-gray-200">
-                                                {engine.logo_path ? (
-                                                    <img
-                                                        src={`https://asset.localhost/${engine.logo_path}`}
-                                                        className="w-5 h-5 object-contain"
+                                        {engines.map(engine => {
+                                            const engineId = engine.id;
+                                            const isDisabled = engineId ? disabledEngineIds.includes(engineId) : false;
+                                            return (
+                                                <label key={engine.id || engine.name} className="flex items-center gap-2 text-sm text-gray-200">
+                                                    <input
+                                                        type="checkbox"
+                                                        className="accent-blue-500"
+                                                        checked={!isDisabled}
+                                                        disabled={!engineId}
+                                                        onChange={e => {
+                                                            if (!engineId) return;
+                                                            const nextDisabled = e.target.checked
+                                                                ? disabledEngineIds.filter(id => id !== engineId)
+                                                                : [...disabledEngineIds, engineId];
+                                                            updateTournament({ disabledEngineIds: nextDisabled });
+                                                        }}
                                                     />
-                                                ) : (
-                                                    <div className="w-5 h-5 rounded-full bg-gray-700 text-[10px] flex items-center justify-center">
-                                                        ?
-                                                    </div>
-                                                )}
-                                                <span className="truncate">{engine.name}</span>
-                                            </div>
-                                        ))}
+                                                    {engine.logo_path ? (
+                                                        <img
+                                                            src={`https://asset.localhost/${engine.logo_path}`}
+                                                            className="w-5 h-5 object-contain"
+                                                        />
+                                                    ) : (
+                                                        <div className="w-5 h-5 rounded-full bg-gray-700 text-[10px] flex items-center justify-center">
+                                                            ?
+                                                        </div>
+                                                    )}
+                                                    <span className={`truncate ${isDisabled ? 'text-gray-500' : ''}`}>{engine.name}</span>
+                                                </label>
+                                            );
+                                        })}
                                     </div>
                                     {engineCheckResults.length > 0 && (
                                         <div className="space-y-2">
@@ -807,7 +830,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                             ))}
                                         </div>
                                     )}
-                                    {engines.length < 2 && (
+                                    {enabledEngines.length < 2 && (
                                         <div className="text-xs text-amber-300 bg-amber-900/20 border border-amber-700/60 rounded p-2">
                                             Add another engine in the <span className="font-semibold">Engines</span> tab to start a match.
                                         </div>
