@@ -531,7 +531,7 @@ impl Arbiter {
                     let eng_a_key = eng_a_config.id.clone().unwrap_or_else(|| eng_a_config.name.clone());
                     let eng_b_key = eng_b_config.id.clone().unwrap_or_else(|| eng_b_config.name.clone());
 
-                    let engine_a = match AsyncEngine::spawn(&eng_a_config.path).await {
+                    let engine_a = match AsyncEngine::spawn(&eng_a_config.path, eng_a_config.args.as_ref(), eng_a_config.working_directory.as_deref()).await {
                         Ok(e) => {
                             let mut failures = engine_spawn_failures.lock().await;
                             failures.remove(&eng_a_key);
@@ -567,7 +567,7 @@ impl Arbiter {
                             return;
                         }
                     };
-                    let engine_b = match AsyncEngine::spawn(&eng_b_config.path).await {
+                    let engine_b = match AsyncEngine::spawn(&eng_b_config.path, eng_b_config.args.as_ref(), eng_b_config.working_directory.as_deref()).await {
                         Ok(e) => {
                             let mut failures = engine_spawn_failures.lock().await;
                             failures.remove(&eng_b_key);

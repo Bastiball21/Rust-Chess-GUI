@@ -1,4 +1,5 @@
 use std::process::Stdio;
+use std::path::Path;
 use tokio::process::Command;
 use tokio::io::{BufReader, AsyncBufReadExt, AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
@@ -25,8 +26,18 @@ pub struct AsyncEngine {
 }
 
 impl AsyncEngine {
-    pub async fn spawn(path: &str) -> Result<Self> {
+    pub async fn spawn(path: &str, args: Option<&Vec<String>>, cwd: Option<&str>) -> Result<Self> {
         let mut cmd = Command::new(path);
+        if let Some(args) = args {
+            cmd.args(args);
+        }
+
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
+        } else if let Some(parent) = Path::new(path).parent() {
+            cmd.current_dir(parent);
+        }
+
         cmd.stdin(Stdio::piped())
            .stdout(Stdio::piped())
            .stderr(Stdio::null());
@@ -141,7 +152,7 @@ impl AsyncEngine {
 }
 
 pub async fn query_engine_options(path: &str) -> Result<Vec<UciOption>> {
-    let engine = AsyncEngine::spawn(path).await?;
+    let engine = AsyncEngine::spawn(path, None, None).await?;
     let mut rx = engine.stdout_broadcast.subscribe();
 
     engine.send("uci".to_string()).await?;
