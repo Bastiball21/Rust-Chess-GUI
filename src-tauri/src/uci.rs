@@ -146,49 +146,37 @@ pub async fn query_engine_options(path: &str) -> Result<Vec<UciOption>> {
 
     engine.send("uci".to_string()).await?;
 
-    let mut options = Vec::new();
-    let mut uciok = false;
-
-    // Timeout logic could be added here, currently relies on engine responsiveness
-    // Adding a timeout wrapper around the loop would be safer
-    let timeout = tokio::time::sleep(tokio::time::Duration::from_secs(5));
-    tokio::pin!(timeout);
-
-    loop {
-        tokio::select! {
-            _ = &mut timeout => {
-                let _ = engine.kill().await;
-                return Err(anyhow::anyhow!("Timeout waiting for uciok"));
-            }
-            res = rx.recv() => {
-                match res {
-                    Ok(line) => {
-                        if line == "uciok" {
-                            uciok = true;
-                            break;
-                        }
-                        if line.starts_with("option name ") {
-                             if let Some(opt) = parse_uci_option(&line) {
-                                 options.push(opt);
-                             }
+    let options = tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+        let mut options = Vec::new();
+        loop {
+            match rx.recv().await {
+                Ok(line) => {
+                    if line == "uciok" {
+                        return Ok(options);
+                    }
+                    if line.starts_with("option name ") {
+                        if let Some(opt) = parse_uci_option(&line) {
+                            options.push(opt);
                         }
                     }
-                    Err(_) => {
-                        // Channel lag or closed
-                        break;
-                    }
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!("Engine disconnected before uciok"));
                 }
             }
         }
-    }
+    }).await;
 
     let _ = engine.quit().await;
 
-    if !uciok {
-        return Err(anyhow::anyhow!("Engine did not send uciok"));
+    match options {
+        Ok(Ok(options)) => Ok(options),
+        Ok(Err(err)) => Err(err),
+        Err(_) => {
+            let _ = engine.kill().await;
+            Err(anyhow::anyhow!("Timeout waiting for uciok"))
+        }
     }
-
-    Ok(options)
 }
 
 fn parse_uci_option(line: &str) -> Option<UciOption> {

@@ -1,13 +1,13 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import Chessground from 'react-chessground';
-import 'react-chessground/dist/styles/chessground.css';
+import { Board } from './components/Board';
 import { Chess } from 'chess.js';
 import SettingsModal from './components/SettingsModal';
 import StatsPanel from './components/StatsPanel';
 import BottomPanel from './components/BottomPanel';
-import { Settings, Play, Square, Pause } from 'lucide-react';
+import EvalMovePanel from './components/EvalMovePanel';
+import { Settings, Play, Square } from 'lucide-react';
 
 // --- Types --- (Centralize these in types.ts later)
 export interface GameUpdate {
@@ -67,6 +67,26 @@ interface EngineConfig {
   logo_path?: string;
 }
 
+interface SprtSettings {
+  enabled: boolean;
+  h0Elo: number;
+  h1Elo: number;
+  drawRatio: number;
+  alpha: number;
+  beta: number;
+}
+
+interface TournamentSettings {
+  mode: 'Match' | 'RoundRobin' | 'Gauntlet';
+  gamesCount: number;
+  swapSides: boolean;
+  concurrency: number;
+  timeControl: { baseMs: number; incMs: number };
+  eventName: string;
+  pgnPath: string;
+  sprt: SprtSettings;
+}
+
 function App() {
   const [fen, setFen] = useState("start");
   const [orientation, setOrientation] = useState<'white' | 'black'>('white');
@@ -74,6 +94,25 @@ function App() {
   const [gameUpdate, setGameUpdate] = useState<GameUpdate | null>(null);
   const [whiteStats, setWhiteStats] = useState<EngineStats | null>(null);
   const [blackStats, setBlackStats] = useState<EngineStats | null>(null);
+  const [moves, setMoves] = useState<string[]>([]);
+  const [evalHistory, setEvalHistory] = useState<number[]>([]);
+  const [tournamentSettings, setTournamentSettings] = useState<TournamentSettings>({
+      mode: 'Match',
+      gamesCount: 100,
+      swapSides: true,
+      concurrency: 1,
+      timeControl: { baseMs: 60000, incMs: 1000 },
+      eventName: '',
+      pgnPath: 'tournament.pgn',
+      sprt: {
+          enabled: false,
+          h0Elo: 0,
+          h1Elo: 5,
+          drawRatio: 0.5,
+          alpha: 0.05,
+          beta: 0.05,
+      },
+  });
 
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -91,6 +130,10 @@ function App() {
   // Preferences
   const [prefHighlight, setPrefHighlight] = useState(localStorage.getItem('pref_highlight_legal') === 'true');
   const [prefArrows, setPrefArrows] = useState(localStorage.getItem('pref_show_arrows') !== 'false');
+  const chessRef = useRef(new Chess());
+  const lastAppliedMoveRef = useRef<string | null>(null);
+  const lastGameIdRef = useRef<number | null>(null);
+  const gameUpdateRef = useRef<GameUpdate | null>(null);
 
   // Listen for storage changes (settings modal updates)
   useEffect(() => {
@@ -105,12 +148,34 @@ function App() {
   useEffect(() => {
     // Listeners
     const unlistenGame = listen<GameUpdate>('game-update', (event) => {
+        const payload = event.payload;
         setGameUpdate(event.payload);
-        setFen(event.payload.fen);
-        if (event.payload.last_move) {
+        gameUpdateRef.current = payload;
+        setFen(payload.fen);
+        if (payload.game_id !== lastGameIdRef.current) {
+            lastGameIdRef.current = payload.game_id;
+            lastAppliedMoveRef.current = null;
+            const initialFen = payload.last_move ? "start" : payload.fen;
+            chessRef.current = new Chess(initialFen === "start" ? undefined : initialFen);
+            setMoves([]);
+            setEvalHistory([]);
+        }
+        if (payload.last_move) {
             // Parse uci move string to [from, to] for chessground
-            const m = event.payload.last_move;
+            const m = payload.last_move;
             setLastMove([m.substring(0,2), m.substring(2,4)]);
+            if (lastAppliedMoveRef.current !== m) {
+                const from = m.substring(0, 2);
+                const to = m.substring(2, 4);
+                const promotion = m.length > 4 ? m.substring(4) : undefined;
+                const moveResult = chessRef.current.move({ from, to, promotion });
+                if (moveResult?.san) {
+                    setMoves(prev => [...prev, moveResult.san]);
+                    lastAppliedMoveRef.current = m;
+                } else {
+                    chessRef.current = new Chess(payload.fen === "start" ? undefined : payload.fen);
+                }
+            }
         }
     });
 
@@ -126,6 +191,17 @@ function App() {
             if (event.payload.engine_idx === curr.black_engine_idx) setBlackStats(event.payload);
             return curr;
         });
+        const activeGame = gameUpdateRef.current;
+        if (activeGame && event.payload.game_id === activeGame.game_id) {
+            const activeColor = activeGame.fen.split(' ')[1] === 'w' ? 'white' : 'black';
+            const activeEngineIdx = activeColor === 'white' ? activeGame.white_engine_idx : activeGame.black_engine_idx;
+            if (event.payload.engine_idx === activeEngineIdx) {
+                const score = event.payload.score_mate !== null && event.payload.score_mate !== undefined
+                    ? Math.sign(event.payload.score_mate) * 99
+                    : (event.payload.score_cp || 0) / 100;
+                setEvalHistory(prev => [...prev.slice(-99), score]);
+            }
+        }
     });
 
     const unlistenTStats = listen<any>('tournament-stats', (event) => {
@@ -160,19 +236,35 @@ function App() {
     };
   }, []);
 
-  // Compute Arrows for PV
-  const getArrows = () => {
-      if (!prefArrows) return [];
-      const arrows: [string, string, string][] = []; // [from, to, color]
-      if (lastMove.length === 2) arrows.push([lastMove[0], lastMove[1], 'orange']);
-
-      // We could parse PV strings to draw arrows, but for now let's just show last move.
-      // Advanced PV arrows would require full chess logic to parse the PV string into coordinates.
-      // Given we have `chess.js` we can do it, but let's stick to last move for now to keep it smooth.
-      // Actually, user explicitly asked for "Show move arrows" which usually implies PV.
-      // I'll leave it as TODO or basic last move for stability.
-      return arrows;
+  const formatScore = (cp?: number | null, mate?: number | null) => {
+      if (mate !== undefined && mate !== null) return `M${mate}`;
+      if (cp !== undefined && cp !== null) return (cp / 100).toFixed(2);
+      return "0.00";
   };
+
+  const activeColor = gameUpdate ? (gameUpdate.fen.split(' ')[1] === 'w' ? 'white' : 'black') : 'white';
+  const activeStats = activeColor === 'white' ? whiteStats : blackStats;
+  const pvShapes = useMemo(() => {
+      if (!prefArrows) return [];
+      const brushes = ['green', 'blue', 'yellow', 'red'];
+      const pv = activeStats?.pv?.trim();
+      const shapes: { orig: string; dest: string; brush: string }[] = [];
+      if (pv) {
+          const moves = pv.split(/\s+/).filter(Boolean);
+          for (const move of moves) {
+              if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)) continue;
+              const orig = move.slice(0, 2);
+              const dest = move.slice(2, 4);
+              const brush = brushes[shapes.length % brushes.length];
+              shapes.push({ orig, dest, brush });
+              if (shapes.length >= 4) break;
+          }
+      }
+      if (shapes.length === 0 && lastMove.length === 2) {
+          shapes.push({ orig: lastMove[0], dest: lastMove[1], brush: 'orange' });
+      }
+      return shapes;
+  }, [activeStats?.pv, lastMove, prefArrows]);
 
   const startMatch = async () => {
       if (engines.length < 2) {
@@ -183,17 +275,26 @@ function App() {
       try {
           await invoke('start_match', {
               config: {
-                  mode: 'Match', // Default
+                  mode: tournamentSettings.mode,
                   engines,
-                  time_control: { base_ms: 60000, inc_ms: 1000 }, // Defaults, maybe expose in modal later
-                  games_count: 100,
-                  swap_sides: true,
+                  time_control: { base_ms: tournamentSettings.timeControl.baseMs, inc_ms: tournamentSettings.timeControl.incMs },
+                  games_count: tournamentSettings.gamesCount,
+                  swap_sides: tournamentSettings.swapSides,
                   opening,
                   variant: 'standard',
-                  concurrency: 1,
+                  concurrency: tournamentSettings.concurrency > 0 ? tournamentSettings.concurrency : undefined,
                   adjudication,
+                  sprt_enabled: tournamentSettings.sprt.enabled,
+                  sprt_config: tournamentSettings.sprt.enabled ? {
+                      h0_elo: tournamentSettings.sprt.h0Elo,
+                      h1_elo: tournamentSettings.sprt.h1Elo,
+                      draw_ratio: tournamentSettings.sprt.drawRatio,
+                      alpha: tournamentSettings.sprt.alpha,
+                      beta: tournamentSettings.sprt.beta,
+                  } : undefined,
                   disabled_engine_ids: [],
-                  pgn_path: "tournament.pgn"
+                  pgn_path: tournamentSettings.pgnPath,
+                  event_name: tournamentSettings.eventName || undefined,
               }
           });
           setMatchActive(true);
@@ -217,6 +318,8 @@ function App() {
             engines={engines} onUpdateEngines={setEngines}
             adjudication={adjudication} onUpdateAdjudication={setAdjudication}
             opening={opening} onUpdateOpening={setOpening}
+            tournamentSettings={tournamentSettings}
+            onUpdateTournamentSettings={setTournamentSettings}
         />
 
         {/* Main Grid Layout */}
@@ -243,23 +346,21 @@ function App() {
             </div>
 
             {/* Split Content */}
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex overflow-hidden min-h-0">
                 {/* Left: Board Area */}
-                <div className="flex-1 flex flex-col items-center justify-center bg-gray-900/50 relative p-4">
-                    <div className="w-full h-full max-h-full aspect-square shadow-2xl rounded-lg overflow-hidden border-4 border-gray-800 flex items-center justify-center">
-                         <div style={{ width: '100%', height: '100%' }}>
-                             <Chessground
-                                 fen={fen}
-                                 orientation={orientation}
-                                 width="100%"
-                                 height="100%"
-                                 config={{
-                                     viewOnly: true,
-                                     highlight: { lastMove: prefHighlight, check: true },
-                                     drawable: { visible: prefArrows }, // Arrows logic pending
-                                 }}
-                             />
-                         </div>
+                <div className="flex-1 flex flex-col items-center justify-center bg-gray-900/50 relative p-4 min-h-0">
+                    <div className="w-full h-full shadow-2xl rounded-lg overflow-hidden border-4 border-gray-800 min-h-0">
+                         <Board
+                             fen={fen}
+                             orientation={orientation}
+                             lastMove={lastMove}
+                             shapes={pvShapes}
+                             config={{
+                                 viewOnly: true,
+                                 highlight: { lastMove: prefHighlight, check: true },
+                                 drawable: { visible: prefArrows },
+                             }}
+                         />
                     </div>
                     {/* Engines Names near board */}
                     <div className="absolute top-4 left-4 text-white font-bold bg-black/50 px-3 py-1 rounded">
@@ -270,8 +371,17 @@ function App() {
                     </div>
                 </div>
 
+                {/* Middle: Eval + Move Panel */}
+                <div className="w-[320px] shrink-0 p-4 border-l border-gray-700 bg-gray-900/70 flex flex-col min-h-0">
+                     <EvalMovePanel
+                         evalHistory={evalHistory}
+                         currentEval={formatScore(activeStats?.score_cp, activeStats?.score_mate)}
+                         moves={moves}
+                     />
+                </div>
+
                 {/* Right: Stats Panel */}
-                <div className="w-[400px] shrink-0 p-4 border-l border-gray-700 bg-gray-800">
+                <div className="w-[380px] shrink-0 p-4 border-l border-gray-700 bg-gray-800 flex flex-col min-h-0">
                      <StatsPanel
                          gameUpdate={gameUpdate}
                          whiteStats={whiteStats}
@@ -285,7 +395,7 @@ function App() {
             </div>
 
             {/* Bottom: Tabs & Tables */}
-            <div className="h-[300px] shrink-0 bg-gray-800 border-t border-gray-700">
+            <div className="h-[240px] shrink-0 bg-gray-800 border-t border-gray-700">
                 <BottomPanel
                     standings={standings}
                     schedule={schedule}
