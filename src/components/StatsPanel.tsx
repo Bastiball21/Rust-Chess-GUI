@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { Chess } from 'chess.js';
 import { EngineStats, GameUpdate } from '../App'; // We might need to extract types to a common file if circular deps arise
 import { Activity, Cpu, Layers, Zap, Clock, Hash } from 'lucide-react';
 import { PvBoard } from './PvBoard';
@@ -18,6 +19,38 @@ const StatsPanel: React.FC<StatsPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'engine' | 'pv'>('engine');
 
+  const buildPvTable = (pv: string, fen: string) => {
+      const rows: { moveNumber: number; white?: string; black?: string }[] = [];
+      if (!pv || !fen) return rows;
+      try {
+          const game = new Chess(fen === "start" ? undefined : fen);
+          const fenParts = fen.split(' ');
+          let fullMove = Number.parseInt(fenParts[5] ?? "1", 10) || 1;
+          const moves = pv.split(/\s+/).filter(Boolean);
+          for (const move of moves) {
+              if (move === "0000") continue;
+              if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)) break;
+              const from = move.slice(0, 2);
+              const to = move.slice(2, 4);
+              const promotion = move.length > 4 ? move.slice(4) : undefined;
+              const applied = game.move({ from, to, promotion });
+              if (!applied) break;
+              if (applied.color === 'w') {
+                  rows.push({ moveNumber: fullMove, white: applied.san });
+              } else {
+                  if (rows.length === 0 || rows[rows.length - 1].black) {
+                      rows.push({ moveNumber: fullMove });
+                  }
+                  rows[rows.length - 1].black = applied.san;
+                  fullMove += 1;
+              }
+          }
+      } catch (e) {
+          return [];
+      }
+      return rows;
+  };
+
   // Helper to format score
   const formatScore = (cp?: number | null, mate?: number | null) => {
       if (mate !== undefined && mate !== null) return `M${mate}`;
@@ -28,6 +61,10 @@ const StatsPanel: React.FC<StatsPanelProps> = ({
   const activeColor = gameUpdate ? (gameUpdate.fen.split(' ')[1] === 'w' ? 'white' : 'black') : 'white';
   const activeStats = activeColor === 'white' ? whiteStats : blackStats;
   const isWhite = activeColor === 'white';
+  const pvRows = useMemo(() => {
+      if (!activeStats?.pv || !gameUpdate?.fen) return [];
+      return buildPvTable(activeStats.pv, gameUpdate.fen);
+  }, [activeStats?.pv, gameUpdate?.fen]);
 
   return (
     <div className="h-full flex flex-col bg-gray-800 text-white rounded-lg overflow-hidden border border-gray-700 shadow-lg">
@@ -122,20 +159,49 @@ const StatsPanel: React.FC<StatsPanelProps> = ({
           )}
 
           {activeTab === 'pv' && (
-              <div className="flex-1 bg-gray-900/50 rounded border border-gray-700 p-2 flex flex-col items-center justify-center relative">
-                  <div className="w-[200px] h-[200px] pointer-events-none opacity-80">
-                       {/* Mini PV Board Visualization */}
-                       {activeStats?.pv && gameUpdate?.fen ? (
-                           <PvBoard pv={activeStats.pv} currentFen={gameUpdate.fen} />
-                       ) : (
-                           <span className="text-xs text-gray-500">No PV available</span>
-                       )}
-                  </div>
-                  <div className="mt-4 text-center">
-                      <div className="text-2xl font-bold font-mono text-blue-400">
-                          {formatScore(activeStats?.score_cp, activeStats?.score_mate)}
+              <div className="flex-1 bg-gray-900/50 rounded border border-gray-700 p-4 flex flex-col gap-4">
+                  <div className="flex flex-col items-center">
+                      <div className="w-[200px] h-[200px] pointer-events-none opacity-80">
+                           {/* Mini PV Board Visualization */}
+                           {activeStats?.pv && gameUpdate?.fen ? (
+                               <PvBoard pv={activeStats.pv} currentFen={gameUpdate.fen} side={activeColor} />
+                           ) : (
+                               <span className="text-xs text-gray-500">No PV available</span>
+                           )}
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">Evaluation</div>
+                      <div className="mt-4 text-center">
+                          <div className="text-2xl font-bold font-mono text-blue-400">
+                              {formatScore(activeStats?.score_cp, activeStats?.score_mate)}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">Evaluation</div>
+                      </div>
+                  </div>
+                  <div className="flex-1 min-h-0">
+                      <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">PV Table</div>
+                      <div className="border border-gray-700 rounded bg-gray-900/60 h-full overflow-y-auto">
+                          {pvRows.length === 0 ? (
+                              <div className="p-4 text-center text-xs text-gray-500">No PV available</div>
+                          ) : (
+                              <table className="w-full text-xs text-left">
+                                  <thead className="sticky top-0 bg-gray-900 text-gray-400">
+                                      <tr>
+                                          <th className="p-2 w-12">#</th>
+                                          <th className="p-2">White</th>
+                                          <th className="p-2">Black</th>
+                                      </tr>
+                                  </thead>
+                                  <tbody>
+                                      {pvRows.map((row) => (
+                                          <tr key={`${row.moveNumber}-${row.white || ''}-${row.black || ''}`} className="border-b border-gray-800">
+                                              <td className="p-2 font-mono text-gray-500">{row.moveNumber}</td>
+                                              <td className="p-2 font-mono text-blue-200">{row.white || '-'}</td>
+                                              <td className="p-2 font-mono text-blue-200">{row.black || '-'}</td>
+                                          </tr>
+                                      ))}
+                                  </tbody>
+                              </table>
+                          )}
+                      </div>
                   </div>
               </div>
           )}

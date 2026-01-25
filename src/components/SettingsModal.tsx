@@ -31,6 +31,7 @@ interface AdjudicationConfig {
   draw_move_number: number | null;
   draw_move_count: number | null;
   result_adjudication: boolean;
+  syzygy_path: string | null;
 }
 
 interface OpeningConfig {
@@ -51,13 +52,14 @@ interface SprtSettings {
 }
 
 interface TournamentSettings {
-  mode: 'Match' | 'RoundRobin' | 'Gauntlet';
+  mode: 'Match' | 'RoundRobin' | 'Gauntlet' | 'Swiss';
   gamesCount: number;
   swapSides: boolean;
   concurrency: number;
   timeControl: { baseMs: number; incMs: number };
   eventName: string;
   pgnPath: string;
+  variant: 'standard' | 'chess960';
   sprt: SprtSettings;
 }
 
@@ -391,6 +393,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         <div className="space-y-4">
                             <h4 className="font-bold text-lg text-blue-400 border-b border-gray-700 pb-2">Opening Suite</h4>
                             <div>
+                                <label className="block text-xs text-gray-400 mb-1">Variant</label>
+                                <select className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                        value={tournamentSettings.variant}
+                                        onChange={e => updateTournament({ variant: e.target.value as TournamentSettings['variant'] })}>
+                                    <option value="standard">Standard</option>
+                                    <option value="chess960">Chess960</option>
+                                </select>
+                            </div>
+                            <div>
                                 <label className="block text-xs text-gray-400 mb-1">FEN String</label>
                                 <input className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
                                        placeholder="Paste FEN..."
@@ -479,6 +490,20 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                        onChange={e => onUpdateAdjudication({...adjudication, result_adjudication: e.target.checked})} />
                                 TB / Syzygy Adjudication
                              </label>
+
+                             <div>
+                                 <label className="block text-xs text-gray-400 mb-1">Syzygy tablebases path</label>
+                                 <div className="flex gap-2">
+                                     <input className="flex-1 bg-gray-700 border border-gray-600 rounded p-2 text-xs"
+                                            value={adjudication.syzygy_path || ""} readOnly placeholder="No path selected" />
+                                     <button onClick={async () => {
+                                         const selected = await open({ directory: true });
+                                         if (selected && typeof selected === 'string') {
+                                             onUpdateAdjudication({ ...adjudication, syzygy_path: selected });
+                                         }
+                                     }} className="bg-gray-600 px-3 rounded hover:bg-gray-500">Browse...</button>
+                                 </div>
+                             </div>
                         </div>
                     </div>
                 )}
@@ -498,6 +523,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                         <option value="Match">Match</option>
                                         <option value="RoundRobin">Round Robin</option>
                                         <option value="Gauntlet">Gauntlet</option>
+                                        <option value="Swiss">Swiss</option>
                                     </select>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
@@ -520,6 +546,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                             value={tournamentSettings.concurrency}
                                             onChange={e => updateTournament({ concurrency: parseInt(e.target.value, 10) || 1 })}
                                         />
+                                        <p className="text-[11px] text-gray-500 mt-1">
+                                            You can adjust concurrency while a tournament is running.
+                                        </p>
                                     </div>
                                 </div>
                                 <label className="flex items-center gap-2 text-sm text-gray-300">
