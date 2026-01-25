@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Board } from './components/Board';
@@ -88,9 +88,27 @@ interface TournamentSettings {
   sprt: SprtSettings;
 }
 
+interface AdjudicationConfig {
+  resign_score: number | null;
+  resign_move_count: number | null;
+  draw_score: number | null;
+  draw_move_number: number | null;
+  draw_move_count: number | null;
+  result_adjudication: boolean;
+  syzygy_path: string | null;
+}
+
+interface OpeningConfig {
+  file: string | null;
+  fen: string | null;
+  depth: number | null;
+  order: string | null;
+  book_path: string | null;
+}
+
 function App() {
   const [fen, setFen] = useState("start");
-  const [orientation, setOrientation] = useState<'white' | 'black'>('white');
+  const [orientation] = useState<'white' | 'black'>('white');
   const [lastMove, setLastMove] = useState<string[]>([]);
   const [gameUpdate, setGameUpdate] = useState<GameUpdate | null>(null);
   const [whiteStats, setWhiteStats] = useState<EngineStats | null>(null);
@@ -119,7 +137,7 @@ function App() {
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [engines, setEngines] = useState<EngineConfig[]>([]);
-  const [adjudication, setAdjudication] = useState({
+  const [adjudication, setAdjudication] = useState<AdjudicationConfig>({
       resign_score: 600,
       resign_move_count: 5,
       draw_score: 5,
@@ -128,7 +146,13 @@ function App() {
       result_adjudication: true,
       syzygy_path: null,
   });
-  const [opening, setOpening] = useState({ file: null, fen: null, depth: 0, order: "sequential", book_path: null });
+  const [opening, setOpening] = useState<OpeningConfig>({
+      file: null,
+      fen: null,
+      depth: 0,
+      order: "sequential",
+      book_path: null,
+  });
 
   // Tournament State
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
