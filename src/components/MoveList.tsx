@@ -16,22 +16,22 @@ export const MoveList: React.FC<MoveListProps> = ({ moves }) => {
   return (
     <div
       ref={scrollRef}
-      className="h-full w-full overflow-y-auto bg-gray-900 rounded border border-gray-700 p-2 text-xs font-mono"
+      className="h-full w-full overflow-y-auto bg-gray-900 rounded border border-gray-700 p-3 text-sm font-mono"
     >
-      <div className="grid grid-cols-[30px_1fr_1fr] gap-x-2 gap-y-1">
+      <div className="grid grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)] gap-x-3 gap-y-2">
         {Array.from({ length: Math.ceil(moves.length / 2) }).map((_, i) => (
           <React.Fragment key={i}>
             <div className="text-gray-500 text-right">{i + 1}.</div>
             <div
-              className={`pl-1 rounded ${
-                i * 2 === moves.length - 1 ? "bg-yellow-600/50 text-white" : "text-gray-300"
+              className={`px-2 py-1 rounded ${
+                i * 2 === moves.length - 1 ? "bg-yellow-500/20 text-yellow-200" : "text-gray-200"
               }`}
             >
               {moves[i * 2]}
             </div>
             <div
-              className={`pl-1 rounded ${
-                i * 2 + 1 === moves.length - 1 ? "bg-yellow-600/50 text-white" : "text-gray-300"
+              className={`px-2 py-1 rounded ${
+                i * 2 + 1 === moves.length - 1 ? "bg-yellow-500/20 text-yellow-200" : "text-gray-200"
               }`}
             >
               {moves[i * 2 + 1] || ""}

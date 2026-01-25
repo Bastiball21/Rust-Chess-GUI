@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::sprt::SprtConfig;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EngineConfig {
@@ -56,6 +57,9 @@ pub struct TournamentConfig {
     #[serde(default)]
     pub resume_from_state: bool,
     pub adjudication: AdjudicationConfig,
+    #[serde(default)]
+    pub sprt_enabled: bool,
+    pub sprt_config: Option<SprtConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

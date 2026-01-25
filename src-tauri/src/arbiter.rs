@@ -243,7 +243,7 @@ impl Arbiter {
             should_stop: Arc::new(Mutex::new(false)),
             is_paused: Arc::new(Mutex::new(false)),
             openings,
-            tourney_stats: Arc::new(Mutex::new(TournamentStats::default())),
+            tourney_stats: Arc::new(Mutex::new(TournamentStats::new(config.sprt_enabled, config.sprt_config.clone()))),
             schedule_queue: Arc::new(Mutex::new(VecDeque::new())),
             pairing_states: Arc::new(Mutex::new(pairing_states)),
             remaining_rounds: Arc::new(Mutex::new(remaining_rounds)),
@@ -503,6 +503,9 @@ impl Arbiter {
                              let mut stats = tourney_stats.lock().await;
                              let is_white_a = white_engine_idx == 0;
                              stats.update(&base_result, is_white_a);
+                             if should_stop_for_sprt(&config, &stats) {
+                                 *should_stop.lock().await = true;
+                             }
                              let _ = tourney_stats_tx.send(stats.clone()).await;
                         }
                         return;
@@ -694,6 +697,9 @@ impl Arbiter {
                             let standings = crate::stats::calculate_standings(&schedule, &config.engines);
                             stats.update_standings(standings);
 
+                            if should_stop_for_sprt(&config, &stats) {
+                                *should_stop.lock().await = true;
+                            }
                             let _ = tourney_stats_tx.send(stats.clone()).await;
                         }
                     }
@@ -867,6 +873,13 @@ async fn persist_resume_state(
     }).await??;
 
     Ok(())
+}
+
+fn should_stop_for_sprt(config: &TournamentConfig, stats: &TournamentStats) -> bool {
+    if !config.sprt_enabled {
+        return false;
+    }
+    matches!(stats.sprt_state.as_str(), "Accept" | "Reject")
 }
 
 fn compute_game_mapping(

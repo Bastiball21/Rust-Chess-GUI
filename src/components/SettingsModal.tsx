@@ -41,6 +41,26 @@ interface OpeningConfig {
   book_path: string | null;
 }
 
+interface SprtSettings {
+  enabled: boolean;
+  h0Elo: number;
+  h1Elo: number;
+  drawRatio: number;
+  alpha: number;
+  beta: number;
+}
+
+interface TournamentSettings {
+  mode: 'Match' | 'RoundRobin' | 'Gauntlet';
+  gamesCount: number;
+  swapSides: boolean;
+  concurrency: number;
+  timeControl: { baseMs: number; incMs: number };
+  eventName: string;
+  pgnPath: string;
+  sprt: SprtSettings;
+}
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -50,6 +70,8 @@ interface SettingsModalProps {
   onUpdateAdjudication: (adj: AdjudicationConfig) => void;
   opening: OpeningConfig;
   onUpdateOpening: (op: OpeningConfig) => void;
+  tournamentSettings: TournamentSettings;
+  onUpdateTournamentSettings: (settings: TournamentSettings) => void;
 }
 
 // Sub-component for Engine Edit
@@ -224,7 +246,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     isOpen, onClose,
     engines, onUpdateEngines,
     adjudication, onUpdateAdjudication,
-    opening, onUpdateOpening
+    opening, onUpdateOpening,
+    tournamentSettings, onUpdateTournamentSettings
 }) => {
   const [activeTab, setActiveTab] = useState<'general' | 'engines' | 'games' | 'tournaments'>('engines');
   const [editingEngineIdx, setEditingEngineIdx] = useState<number | null>(null);
@@ -241,6 +264,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setGeneralSettings(prev => ({ ...prev, [key]: val }));
       // Dispatch event for live update
       window.dispatchEvent(new Event('storage'));
+  };
+
+  const updateTournament = (updates: Partial<TournamentSettings>) => {
+      onUpdateTournamentSettings({ ...tournamentSettings, ...updates });
   };
 
   if (!isOpen) return null;
@@ -457,9 +484,197 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
 
                 {activeTab === 'tournaments' && (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <Settings size={48} className="mb-4 opacity-50"/>
-                        <p>Tournament defaults configuration coming soon.</p>
+                    <div className="space-y-6">
+                        <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-4">
+                                <h4 className="font-bold text-lg text-blue-400 border-b border-gray-700 pb-2">Tournament Format</h4>
+                                <div>
+                                    <label className="block text-xs text-gray-400 mb-1">Mode</label>
+                                    <select
+                                        className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                        value={tournamentSettings.mode}
+                                        onChange={e => updateTournament({ mode: e.target.value as TournamentSettings['mode'] })}
+                                    >
+                                        <option value="Match">Match</option>
+                                        <option value="RoundRobin">Round Robin</option>
+                                        <option value="Gauntlet">Gauntlet</option>
+                                    </select>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Games Count</label>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={tournamentSettings.gamesCount}
+                                            onChange={e => updateTournament({ gamesCount: parseInt(e.target.value, 10) || 1 })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Concurrency</label>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={tournamentSettings.concurrency}
+                                            onChange={e => updateTournament({ concurrency: parseInt(e.target.value, 10) || 1 })}
+                                        />
+                                    </div>
+                                </div>
+                                <label className="flex items-center gap-2 text-sm text-gray-300">
+                                    <input
+                                        type="checkbox"
+                                        checked={tournamentSettings.swapSides}
+                                        onChange={e => updateTournament({ swapSides: e.target.checked })}
+                                    />
+                                    Swap sides each game
+                                </label>
+                            </div>
+
+                            <div className="space-y-4">
+                                <h4 className="font-bold text-lg text-green-400 border-b border-gray-700 pb-2">Time Control</h4>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Base (sec)</label>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={Math.round(tournamentSettings.timeControl.baseMs / 1000)}
+                                            onChange={e => updateTournament({
+                                                timeControl: {
+                                                    ...tournamentSettings.timeControl,
+                                                    baseMs: (parseFloat(e.target.value) || 1) * 1000,
+                                                },
+                                            })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Increment (sec)</label>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            step={0.1}
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={tournamentSettings.timeControl.incMs / 1000}
+                                            onChange={e => updateTournament({
+                                                timeControl: {
+                                                    ...tournamentSettings.timeControl,
+                                                    incMs: (parseFloat(e.target.value) || 0) * 1000,
+                                                },
+                                            })}
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-400 mb-1">Event Name</label>
+                                    <input
+                                        className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
+                                        value={tournamentSettings.eventName}
+                                        onChange={e => updateTournament({ eventName: e.target.value })}
+                                        placeholder="CCRL GUI Tournament"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-400 mb-1">PGN Output Path</label>
+                                    <input
+                                        className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
+                                        value={tournamentSettings.pgnPath}
+                                        onChange={e => updateTournament({ pgnPath: e.target.value })}
+                                        placeholder="tournament.pgn"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-gray-900/40 p-4 rounded border border-gray-700 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h4 className="font-bold text-lg text-purple-300">SPRT</h4>
+                                    <p className="text-xs text-gray-400">Stop early when the SPRT decision reaches Accept/Reject.</p>
+                                </div>
+                                <label className="flex items-center gap-2 text-sm text-gray-300">
+                                    <input
+                                        type="checkbox"
+                                        checked={tournamentSettings.sprt.enabled}
+                                        onChange={e => updateTournament({
+                                            sprt: { ...tournamentSettings.sprt, enabled: e.target.checked },
+                                        })}
+                                    />
+                                    Enable SPRT
+                                </label>
+                            </div>
+
+                            {tournamentSettings.sprt.enabled && (
+                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">H0 Elo</label>
+                                        <input
+                                            type="number"
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={tournamentSettings.sprt.h0Elo}
+                                            onChange={e => updateTournament({
+                                                sprt: { ...tournamentSettings.sprt, h0Elo: parseFloat(e.target.value) || 0 },
+                                            })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">H1 Elo</label>
+                                        <input
+                                            type="number"
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={tournamentSettings.sprt.h1Elo}
+                                            onChange={e => updateTournament({
+                                                sprt: { ...tournamentSettings.sprt, h1Elo: parseFloat(e.target.value) || 0 },
+                                            })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Draw Ratio</label>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            max={0.99}
+                                            step={0.01}
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={tournamentSettings.sprt.drawRatio}
+                                            onChange={e => updateTournament({
+                                                sprt: { ...tournamentSettings.sprt, drawRatio: parseFloat(e.target.value) || 0 },
+                                            })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Alpha</label>
+                                        <input
+                                            type="number"
+                                            min={0.001}
+                                            max={0.5}
+                                            step={0.001}
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={tournamentSettings.sprt.alpha}
+                                            onChange={e => updateTournament({
+                                                sprt: { ...tournamentSettings.sprt, alpha: parseFloat(e.target.value) || 0.05 },
+                                            })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Beta</label>
+                                        <input
+                                            type="number"
+                                            min={0.001}
+                                            max={0.5}
+                                            step={0.001}
+                                            className="bg-gray-700 border border-gray-600 rounded p-2 w-full"
+                                            value={tournamentSettings.sprt.beta}
+                                            onChange={e => updateTournament({
+                                                sprt: { ...tournamentSettings.sprt, beta: parseFloat(e.target.value) || 0.05 },
+                                            })}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
             </div>

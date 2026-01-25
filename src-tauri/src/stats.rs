@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::sprt::{GameResult, Sprt, SprtStatus};
+use crate::sprt::{GameResult, Sprt, SprtConfig, SprtStatus};
 use crate::types::{Standings, StandingsEntry};
 use std::collections::HashMap;
 
@@ -16,6 +16,7 @@ pub struct TournamentStats {
     pub sprt_lower_bound: f64,
     pub sprt_upper_bound: f64,
     pub sprt_state: String,
+    pub sprt_enabled: bool,
     pub standings: Standings, // Integrated Standings
     #[serde(skip)]
     sprt: Sprt,
@@ -39,6 +40,7 @@ impl Default for TournamentStats {
             sprt_lower_bound: status.lower_bound,
             sprt_upper_bound: status.upper_bound,
             sprt_state: status.state.to_string(),
+            sprt_enabled: true,
             sprt,
             standings: Standings::default(),
             match_matrix: HashMap::new(),
@@ -47,6 +49,38 @@ impl Default for TournamentStats {
 }
 
 impl TournamentStats {
+    pub fn new(sprt_enabled: bool, sprt_config: Option<SprtConfig>) -> Self {
+        let sprt = Sprt::new(sprt_config.unwrap_or_default());
+        let status = sprt.status();
+        let mut stats = Self {
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            total_games: 0,
+            elo_diff: 0.0,
+            error_margin: 0.0,
+            sprt_status: format!("SPRT: {}", status.state),
+            sprt_llr: status.llr,
+            sprt_lower_bound: status.lower_bound,
+            sprt_upper_bound: status.upper_bound,
+            sprt_state: status.state.to_string(),
+            sprt_enabled,
+            sprt,
+            standings: Standings::default(),
+            match_matrix: HashMap::new(),
+        };
+
+        if !sprt_enabled {
+            stats.sprt_state = "Disabled".to_string();
+            stats.sprt_status = "SPRT: Disabled".to_string();
+            stats.sprt_llr = 0.0;
+            stats.sprt_lower_bound = 0.0;
+            stats.sprt_upper_bound = 0.0;
+        }
+
+        stats
+    }
+
     pub fn update(&mut self, result: &str, is_white_engine_a: bool) {
         // Result string is "1-0", "0-1", "1/2-1/2"
         let game_result = match result {
@@ -67,8 +101,15 @@ impl TournamentStats {
         }
         self.total_games += 1;
         self.calculate_elo();
-        let sprt_status = self.sprt.update_sprt(game_result);
-        self.apply_sprt_status(sprt_status);
+        if self.sprt_enabled {
+            let sprt_status = self.sprt.update_sprt(game_result);
+            self.apply_sprt_status(sprt_status);
+        } else {
+            self.sprt_state = "Disabled".to_string();
+            self.sprt_llr = 0.0;
+            self.sprt_lower_bound = 0.0;
+            self.sprt_upper_bound = 0.0;
+        }
 
         // Note: Full Standings update requires engine names and IDs,
         // which are not passed here.
@@ -99,7 +140,9 @@ impl TournamentStats {
             self.elo_diff = -400.0 * (1.0 / p - 1.0).log10();
         }
         self.error_margin = 800.0 / (self.total_games as f64).sqrt();
-        self.sprt_status = format!("Elo: {:.1} +/- {:.1} (95%)", self.elo_diff, self.error_margin);
+        if !self.sprt_enabled {
+            self.sprt_status = format!("Elo: {:.1} +/- {:.1} (95%)", self.elo_diff, self.error_margin);
+        }
     }
 
     fn apply_sprt_status(&mut self, status: SprtStatus) {
