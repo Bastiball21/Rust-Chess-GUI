@@ -231,6 +231,9 @@ impl Arbiter {
             schedule_state: schedule_state.clone(),
         }).collect();
 
+        let sprt_enabled = config.sprt_enabled;
+        let sprt_config = config.sprt_config.clone();
+
         Ok(Self {
             active_engines: Arc::new(Mutex::new(Vec::new())),
             config,
@@ -243,7 +246,7 @@ impl Arbiter {
             should_stop: Arc::new(Mutex::new(false)),
             is_paused: Arc::new(Mutex::new(false)),
             openings,
-            tourney_stats: Arc::new(Mutex::new(TournamentStats::new(config.sprt_enabled, config.sprt_config.clone()))),
+            tourney_stats: Arc::new(Mutex::new(TournamentStats::new(sprt_enabled, sprt_config))),
             schedule_queue: Arc::new(Mutex::new(VecDeque::new())),
             pairing_states: Arc::new(Mutex::new(pairing_states)),
             remaining_rounds: Arc::new(Mutex::new(remaining_rounds)),
@@ -792,7 +795,7 @@ fn generate_start_fen(variant: &str) -> String {
     if variant == "chess960" {
         let _pieces = vec![Role::Rook, Role::Knight, Role::Bishop, Role::Queen, Role::King, Role::Bishop, Role::Knight, Role::Rook];
         let mut rng = rand::rng();
-        let mut dark_squares = vec![0, 2, 4, 6]; let mut light_squares = vec![1, 3, 5, 7];
+        let dark_squares = vec![0, 2, 4, 6]; let light_squares = vec![1, 3, 5, 7];
         let b1_pos = *dark_squares.choose(&mut rng).expect("Failed to choose dark square");
         let b2_pos = *light_squares.choose(&mut rng).expect("Failed to choose light square");
         let mut empty: Vec<usize> = (0..8).filter(|&i| i != b1_pos && i != b2_pos).collect();
@@ -998,7 +1001,7 @@ async fn play_game_static(
 
     let mut consec_resign_moves = 0;
     let mut consec_draw_moves = 0;
-    let mut game_result;
+    let game_result;
     let mut repetition_counts: HashMap<String, u32> = HashMap::new();
     let mut halfmove_clock: u32 = start_fen
         .split_whitespace()
