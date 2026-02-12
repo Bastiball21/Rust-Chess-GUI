@@ -469,7 +469,7 @@ function App() {
                 </div>
 
                 {/* Right: Stats Panel */}
-                <div className="w-[380px] shrink-0 p-4 border-l border-gray-700 bg-gray-800 flex flex-col min-h-0">
+                <div className="w-[380px] shrink-0 p-2 border-l border-gray-700 bg-gray-800 flex flex-col min-h-0">
                      <StatsPanel
                          gameUpdate={gameUpdate}
                          whiteStats={whiteStats}
