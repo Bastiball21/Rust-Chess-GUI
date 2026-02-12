@@ -436,8 +436,10 @@ impl Arbiter {
             let mut next_game_id = self.next_game_id.lock().await;
             *next_game_id = max_id;
         } else {
-             let mut next_game_id = self.next_game_id.lock().await;
-             *next_game_id = 0;
+             {
+                 let mut next_game_id = self.next_game_id.lock().await;
+                 *next_game_id = 0;
+             }
              let remaining_rounds = *self.remaining_rounds.lock().await;
              self.update_remaining_rounds(remaining_rounds).await?;
         }

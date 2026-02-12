@@ -7,3 +7,12 @@
 [Result "*"]
 
 1. e2e4 *
+[Event "CCRL GUI Tournament"]
+[Site "CCRL GUI"]
+[Date "2026.02.12"]
+[Round "1"]
+[White "MockWhite"]
+[Black "MockBlack"]
+[Result "1-0"]
+
+1. e2e4 1-0

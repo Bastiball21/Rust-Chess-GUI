@@ -18,7 +18,6 @@ pub mod types;
 pub mod stats;
 pub mod sprt;
 pub mod mock_engine;
-#[cfg(test)] mod test_integration;
 
 struct AppState {
     current_arbiter: Arc<Mutex<Option<Arc<Arbiter>>>>,
