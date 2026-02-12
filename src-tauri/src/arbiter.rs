@@ -1099,7 +1099,10 @@ async fn play_game_static(
                             return Ok(());
                         }
                      },
-                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                     Err(broadcast::error::RecvError::Lagged(count)) => {
+                         println!("WARNING: Engine broadcast lagged, skipped {} messages. Potential lost bestmove.", count);
+                         continue;
+                     },
                      Err(broadcast::error::RecvError::Closed) => {
                          return Err(anyhow::anyhow!("Engine disconnected"));
                      }
