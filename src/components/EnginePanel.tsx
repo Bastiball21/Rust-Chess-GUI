@@ -1,6 +1,7 @@
 import React from 'react';
 import { Settings } from 'lucide-react';
 import { Flag } from './Flag';
+import { PvBoard } from './PvBoard';
 
 interface EnginePanelProps {
     stats: {
@@ -12,13 +13,16 @@ interface EnginePanelProps {
         time?: number;
         pv?: string;
         country_code?: string; // Added flag support
+        score_mate?: number | null; // Added to support mate scores if needed, though existing code just uses score
     };
     side: "white" | "black";
+    currentFen: string;
     onSettingsClick?: () => void; // Added callback for settings
 }
 
-export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, onSettingsClick }) => {
+export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, currentFen, onSettingsClick }) => {
     const isWhite = side === "white";
+    // Using simple score logic from existing component, though mate scores might need better handling if passed
     const scoreColor = stats.score > 0 ? (isWhite ? "text-green-400" : "text-red-400") : (stats.score < 0 ? (isWhite ? "text-red-400" : "text-green-400") : "text-gray-400");
 
     return (
@@ -56,11 +60,8 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, onSetting
                  </div>
              </div>
 
-             <div className="flex-1 bg-gray-900/30 rounded p-2 overflow-y-auto min-h-0 border border-gray-700/50">
-                <span className="text-sm text-gray-500 block mb-1">PV</span>
-                <p className="text-xs font-mono text-gray-300 break-words leading-tight">
-                    {stats.pv || "..."}
-                </p>
+             <div className="flex-1 min-h-0 w-full aspect-square self-center">
+                <PvBoard pv={stats.pv} currentFen={currentFen} side={side} />
              </div>
         </div>
     );

@@ -478,6 +478,7 @@ function App() {
                          blackName={gameUpdate ? engines[gameUpdate.black_engine_idx]?.name : "Black"}
                          whiteLogo={gameUpdate ? engines[gameUpdate.white_engine_idx]?.logo_path : undefined}
                          blackLogo={gameUpdate ? engines[gameUpdate.black_engine_idx]?.logo_path : undefined}
+                         currentFen={fen}
                      />
                 </div>
             </div>
