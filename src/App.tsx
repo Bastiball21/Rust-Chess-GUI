@@ -413,8 +413,17 @@ function App() {
   const whiteLogo = gameUpdate ? getEngineLogo(gameUpdate.white_engine_idx) : undefined;
   const blackLogo = gameUpdate ? getEngineLogo(gameUpdate.black_engine_idx) : undefined;
 
-  // Format Time Control: e.g., "60+1"
-  const tcString = `${tournamentSettings.timeControl.baseMs / 1000}+${tournamentSettings.timeControl.incMs / 1000}`;
+  // --- LOGIC FOR CLOCK TICKING ---
+  // Determine who is active based on FEN, but ONLY if game is running and not paused.
+  const rawActiveColor = gameUpdate ? (gameUpdate.fen.split(' ')[1] === 'w' ? 'white' : 'black') : undefined;
+
+  // The clock should tick ONLY if:
+  // 1. The match is active
+  // 2. We are NOT paused
+  // 3. The game has NOT ended (result is null)
+  const isGameRunning = matchActive && !isPaused && (!gameUpdate || gameUpdate.result === null);
+
+  const effectiveActiveColor = isGameRunning ? rawActiveColor : undefined;
 
   return (
     <div className="flex h-screen w-screen bg-gray-900 text-white overflow-hidden font-sans">
@@ -497,7 +506,10 @@ function App() {
                          evalHistory={evalHistory}
                          currentEval={formatScore(activeStats?.score_cp, activeStats?.score_mate)}
                          moves={moves}
-                         timeControl={tcString}
+                         // Pass the strictly calculated active color
+                         whiteTime={gameUpdate?.white_time ?? tournamentSettings.timeControl.baseMs}
+                         blackTime={gameUpdate?.black_time ?? tournamentSettings.timeControl.baseMs}
+                         activeColor={effectiveActiveColor}
                      />
                 </div>
 
