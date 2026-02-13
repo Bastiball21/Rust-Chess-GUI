@@ -51,6 +51,8 @@ pub struct TournamentConfig {
     pub variant: String,
     pub concurrency: Option<u32>,
     pub pgn_path: Option<String>,
+    #[serde(default)]
+    pub overwrite_pgn: bool,
     pub event_name: Option<String>,
     pub disabled_engine_ids: Vec<String>,
     pub resume_state_path: Option<String>,
