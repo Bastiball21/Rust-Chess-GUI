@@ -395,6 +395,27 @@ function App() {
       }
   };
 
+  // -- Helper calculations --
+  const getEngineName = (idx: number | undefined) => {
+      if (idx === undefined || !engines[idx]) return undefined;
+      return engines[idx].name;
+  };
+
+  const getEngineLogo = (idx: number | undefined) => {
+      if (idx === undefined || !engines[idx]) return undefined;
+      // Convert backend file path to asset URL if needed, or pass as is
+      // (Tauri usually requires specific handling for local files, but for now assuming direct path or url)
+      return engines[idx].logo_path;
+  };
+
+  const whiteName = gameUpdate ? getEngineName(gameUpdate.white_engine_idx) : "White";
+  const blackName = gameUpdate ? getEngineName(gameUpdate.black_engine_idx) : "Black";
+  const whiteLogo = gameUpdate ? getEngineLogo(gameUpdate.white_engine_idx) : undefined;
+  const blackLogo = gameUpdate ? getEngineLogo(gameUpdate.black_engine_idx) : undefined;
+
+  // Format Time Control: e.g., "60+1"
+  const tcString = `${tournamentSettings.timeControl.baseMs / 1000}+${tournamentSettings.timeControl.incMs / 1000}`;
+
   return (
     <div className="flex h-screen w-screen bg-gray-900 text-white overflow-hidden font-sans">
         {/* Settings Modal */}
@@ -462,14 +483,11 @@ function App() {
                                  highlight: { lastMove: prefHighlight, check: true },
                                  drawable: { visible: prefArrows },
                              }}
+                             whiteName={whiteName}
+                             blackName={blackName}
+                             whiteLogo={whiteLogo}
+                             blackLogo={blackLogo}
                          />
-                    </div>
-                    {/* Engines Names near board */}
-                    <div className="absolute top-4 left-4 text-white font-bold bg-black/50 px-3 py-1 rounded">
-                        {gameUpdate && engines[gameUpdate.black_engine_idx]?.name}
-                    </div>
-                    <div className="absolute bottom-4 left-4 text-white font-bold bg-black/50 px-3 py-1 rounded">
-                        {gameUpdate && engines[gameUpdate.white_engine_idx]?.name}
                     </div>
                 </div>
 
@@ -479,6 +497,7 @@ function App() {
                          evalHistory={evalHistory}
                          currentEval={formatScore(activeStats?.score_cp, activeStats?.score_mate)}
                          moves={moves}
+                         timeControl={tcString}
                      />
                 </div>
 
@@ -488,10 +507,10 @@ function App() {
                          gameUpdate={gameUpdate}
                          whiteStats={whiteStats}
                          blackStats={blackStats}
-                         whiteName={gameUpdate ? engines[gameUpdate.white_engine_idx]?.name : "White"}
-                         blackName={gameUpdate ? engines[gameUpdate.black_engine_idx]?.name : "Black"}
-                         whiteLogo={gameUpdate ? engines[gameUpdate.white_engine_idx]?.logo_path : undefined}
-                         blackLogo={gameUpdate ? engines[gameUpdate.black_engine_idx]?.logo_path : undefined}
+                         whiteName={whiteName || "White"}
+                         blackName={blackName || "Black"}
+                         whiteLogo={whiteLogo}
+                         blackLogo={blackLogo}
                          currentFen={fen}
                      />
                 </div>
