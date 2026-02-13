@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Plus, Trash2, RefreshCw, FileText, MoreHorizontal } from 'lucide-react';
+import { X, Plus, Trash2, FileText, MoreHorizontal, Clock } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 
 interface EngineConfig {
@@ -128,6 +128,36 @@ export default function SettingsModal({
     }
   };
 
+  // --- TIME CONTROL LOGIC ---
+  const baseMinutes = Math.floor(tournamentSettings.timeControl.baseMs / 60000);
+  const baseSeconds = Math.floor((tournamentSettings.timeControl.baseMs % 60000) / 1000);
+  const incrementSeconds = tournamentSettings.timeControl.incMs / 1000;
+
+  const updateBaseTime = (minutes: number, seconds: number) => {
+      const totalMs = (minutes * 60000) + (seconds * 1000);
+      onUpdateTournamentSettings({
+          ...tournamentSettings,
+          timeControl: { ...tournamentSettings.timeControl, baseMs: totalMs }
+      });
+  };
+
+  const updateIncrement = (seconds: number) => {
+      onUpdateTournamentSettings({
+          ...tournamentSettings,
+          timeControl: { ...tournamentSettings.timeControl, incMs: Math.round(seconds * 1000) }
+      });
+  };
+
+  // New: Apply Presets (Bullet, Blitz, Rapid)
+  const applyPreset = (minutes: number, increment: number) => {
+      const totalMs = minutes * 60000;
+      const incMs = increment * 1000;
+      onUpdateTournamentSettings({
+          ...tournamentSettings,
+          timeControl: { baseMs: totalMs, incMs: incMs }
+      });
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
       <div className="bg-[#262421] w-[800px] h-[600px] rounded-lg shadow-2xl flex flex-col border border-[#3C3B39]">
@@ -235,36 +265,79 @@ export default function SettingsModal({
                  </div>
               </div>
 
-              {/* Time Control */}
-              <div className="bg-[#1e1e1e] p-4 rounded border border-[#333]">
-                <h3 className="text-sm font-bold text-gray-100 mb-3 flex items-center gap-2">
-                    <RefreshCw size={14} className="text-blue-400"/> Time Control
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-xs text-gray-500 mb-1">Base (ms)</label>
-                        <input
-                           type="number"
-                           className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm font-mono"
-                           value={tournamentSettings.timeControl.baseMs}
-                           onChange={e => onUpdateTournamentSettings({
-                               ...tournamentSettings,
-                               timeControl: {...tournamentSettings.timeControl, baseMs: parseInt(e.target.value) || 0}
-                           })}
-                        />
+              {/* Time Control (Cutechess-Inspired Style) */}
+              <div className="bg-[#1e1e1e] rounded border border-[#333] overflow-hidden">
+                <div className="bg-[#252525] px-4 py-2 border-b border-[#333] flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
+                        <Clock size={14} className="text-blue-400"/> Time Control
+                    </h3>
+
+                    {/* Presets Dropdown */}
+                    <select
+                        className="bg-[#111] border border-[#333] text-xs text-gray-400 rounded px-2 py-1 outline-none focus:border-blue-500"
+                        onChange={(e) => {
+                            const [m, i] = e.target.value.split(',').map(Number);
+                            applyPreset(m, i);
+                        }}
+                        defaultValue=""
+                    >
+                        <option value="" disabled>Presets...</option>
+                        <option value="1,0">Bullet (1+0)</option>
+                        <option value="1,1">Bullet (1+1)</option>
+                        <option value="3,0">Blitz (3+0)</option>
+                        <option value="3,2">Blitz (3+2)</option>
+                        <option value="5,0">Blitz (5+0)</option>
+                        <option value="10,0">Rapid (10+0)</option>
+                        <option value="10,5">Rapid (10+5)</option>
+                    </select>
+                </div>
+
+                <div className="p-4">
+                    <div className="flex items-center gap-4">
+                        {/* Time Field */}
+                        <div className="flex-1">
+                            <label className="block text-[10px] uppercase tracking-wider font-bold text-gray-500 mb-1">Base Time</label>
+                            <div className="flex items-center bg-[#111] border border-[#333] rounded p-1 group focus-within:border-blue-500 transition-colors">
+                                <input
+                                   type="number" min="0"
+                                   className="w-12 bg-transparent text-right text-lg font-mono font-bold text-white outline-none placeholder-gray-700"
+                                   placeholder="00"
+                                   value={baseMinutes}
+                                   onChange={e => updateBaseTime(parseInt(e.target.value) || 0, baseSeconds)}
+                                />
+                                <span className="text-gray-500 px-1 font-mono">:</span>
+                                <input
+                                   type="number" min="0" max="59"
+                                   className="w-12 bg-transparent text-left text-lg font-mono font-bold text-white outline-none placeholder-gray-700"
+                                   placeholder="00"
+                                   value={baseSeconds.toString().padStart(2, '0')}
+                                   onChange={e => updateBaseTime(baseMinutes, parseInt(e.target.value) || 0)}
+                                />
+                                <span className="text-xs text-gray-500 ml-auto px-2">min:sec</span>
+                            </div>
+                        </div>
+
+                        {/* Separator */}
+                        <div className="pt-5 text-gray-600 font-bold text-xl">+</div>
+
+                        {/* Increment Field */}
+                        <div className="flex-1">
+                            <label className="block text-[10px] uppercase tracking-wider font-bold text-gray-500 mb-1">Increment</label>
+                            <div className="flex items-center bg-[#111] border border-[#333] rounded p-1 group focus-within:border-blue-500 transition-colors">
+                                <input
+                                   type="number" min="0" step="0.1"
+                                   className="w-full bg-transparent text-center text-lg font-mono font-bold text-white outline-none"
+                                   value={incrementSeconds}
+                                   onChange={e => updateIncrement(parseFloat(e.target.value) || 0)}
+                                />
+                                <span className="text-xs text-gray-500 px-2 absolute right-8 pointer-events-none">sec</span>
+                            </div>
+                        </div>
                     </div>
-                    <div>
-                        <label className="block text-xs text-gray-500 mb-1">Increment (ms)</label>
-                        <input
-                           type="number"
-                           className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm font-mono"
-                           value={tournamentSettings.timeControl.incMs}
-                           onChange={e => onUpdateTournamentSettings({
-                               ...tournamentSettings,
-                               timeControl: {...tournamentSettings.timeControl, incMs: parseInt(e.target.value) || 0}
-                           })}
-                        />
-                    </div>
+
+                    <p className="text-[10px] text-gray-500 mt-2 text-center">
+                        Format: <span className="text-gray-400">Time per game</span> + <span className="text-gray-400">Increment per move</span>
+                    </p>
                 </div>
               </div>
 
