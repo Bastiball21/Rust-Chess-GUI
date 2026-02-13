@@ -46,10 +46,16 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({ stats, side, currentFe
              </div>
 
              <div className="flex flex-row flex-1 min-h-0 gap-2 overflow-hidden">
-                 <div className="flex-1 flex items-center justify-center min-w-0 min-h-0 overflow-hidden">
-                    <div className="aspect-square w-auto h-auto max-w-full max-h-full">
-                        <PvBoard pv={stats.pv} currentFen={currentFen} side={side} />
-                    </div>
+                 {/* Left: PV Board (Flexible container) */}
+                 <div className="flex-1 min-w-0 min-h-0 bg-gray-900/30 rounded border border-gray-700/50 flex items-center justify-center p-1">
+                     {/* The wrapper needs w-full to try to fill space, but max-h-full to not overflow vertically */}
+                     <div className="aspect-square w-full max-h-full max-w-full">
+                         <PvBoard
+                             pv={stats.pv}
+                             currentFen={currentFen}
+                             side={side}
+                         />
+                     </div>
                  </div>
 
                  <div className="w-32 flex flex-col gap-2 shrink-0 text-xs font-mono text-gray-400 h-full overflow-hidden">
