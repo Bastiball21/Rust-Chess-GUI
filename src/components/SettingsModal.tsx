@@ -1,6 +1,6 @@
 import React from 'react';
-import { X, Plus, Trash2, FileText, MoreHorizontal, Clock } from 'lucide-react';
-import { save } from '@tauri-apps/plugin-dialog';
+import { X, Plus, Trash2, FileText, MoreHorizontal, Clock, Cpu, Shield, BookOpen } from 'lucide-react';
+import { save, open } from '@tauri-apps/plugin-dialog';
 
 interface EngineConfig {
   id?: string;
@@ -39,7 +39,7 @@ interface SprtSettings {
 }
 
 interface TournamentSettings {
-    mode: 'Match' | 'RoundRobin' | 'Gauntlet' | 'Swiss';
+    mode: 'Match' | 'RoundRobin' | 'Gauntlet' | 'Swiss' | 'Pyramid';
     gamesCount: number;
     swapSides: boolean;
     concurrency: number;
@@ -74,10 +74,10 @@ export default function SettingsModal({
   onStartMatch,
   engines,
   onUpdateEngines,
-  // adjudication,
-  // onUpdateAdjudication,
-  // opening,
-  // onUpdateOpening,
+  adjudication,
+  onUpdateAdjudication,
+  opening,
+  onUpdateOpening,
   tournamentSettings,
   onUpdateTournamentSettings,
 }: SettingsModalProps) {
@@ -158,6 +158,35 @@ export default function SettingsModal({
       });
   };
 
+  // --- OPENING BOOK HANDLER ---
+  const handleBrowseBookPath = async () => {
+    try {
+      const selected = await open({
+        title: 'Select Opening Book',
+        defaultPath: opening.book_path || '.',
+        filters: [{ name: 'Books', extensions: ['bin', 'pgn', 'epd'] }]
+      });
+      if (selected && typeof selected === 'string') {
+        onUpdateOpening({ ...opening, book_path: selected });
+      }
+    } catch (err) {
+      console.error('Failed to open book dialog:', err);
+    }
+  };
+
+  // --- ENGINE OPTIONS HANDLER (Hash/Threads) ---
+  // Helper to update specific options for ALL engines (common use case)
+  const updateGlobalOption = (name: string, value: string) => {
+      const updatedEngines = engines.map(eng => {
+          const newOptions = [...eng.options];
+          const idx = newOptions.findIndex(opt => opt[0] === name);
+          if (idx >= 0) newOptions[idx][1] = value;
+          else newOptions.push([name, value]);
+          return { ...eng, options: newOptions };
+      });
+      onUpdateEngines(updatedEngines);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
       <div className="bg-[#262421] w-[800px] h-[600px] rounded-lg shadow-2xl flex flex-col border border-[#3C3B39]">
@@ -226,6 +255,33 @@ export default function SettingsModal({
               >
                 <Plus size={18} /> Add Engine
               </button>
+
+              {/* Common Engine Options */}
+              <div className="bg-[#1e1e1e] p-4 rounded border border-[#333] mt-6">
+                 <h3 className="text-sm font-bold text-gray-100 mb-3 flex items-center gap-2">
+                    <Cpu size={14} className="text-purple-400"/> Engine Defaults
+                 </h3>
+                 <div className="grid grid-cols-2 gap-4">
+                     <div>
+                        <label className="block text-xs text-gray-500 mb-1">Hash Size (MB)</label>
+                        <input
+                           type="number"
+                           className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm font-mono"
+                           placeholder="16"
+                           onChange={e => updateGlobalOption('Hash', e.target.value)}
+                        />
+                     </div>
+                     <div>
+                        <label className="block text-xs text-gray-500 mb-1">Threads</label>
+                        <input
+                           type="number"
+                           className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm font-mono"
+                           placeholder="1"
+                           onChange={e => updateGlobalOption('Threads', e.target.value)}
+                        />
+                     </div>
+                 </div>
+              </div>
             </div>
           )}
 
@@ -341,6 +397,108 @@ export default function SettingsModal({
                 </div>
               </div>
 
+              {/* Opening Book Settings */}
+              <div className="bg-[#1e1e1e] p-4 rounded border border-[#333]">
+                 <h3 className="text-sm font-bold text-gray-100 mb-3 flex items-center gap-2">
+                    <BookOpen size={14} className="text-yellow-400"/> Opening Book
+                 </h3>
+                 <div className="space-y-3">
+                     <div className="flex gap-2">
+                        <input
+                           className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1.5 text-sm text-gray-400 outline-none"
+                           value={opening.book_path || ''}
+                           placeholder="Path to .bin / .pgn..."
+                           readOnly
+                        />
+                        <button onClick={handleBrowseBookPath} className="bg-[#333] hover:bg-[#444] text-gray-200 px-3 rounded border border-[#444]">
+                            <MoreHorizontal size={16} />
+                        </button>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-4">
+                         <div>
+                            <label className="block text-xs text-gray-500 mb-1">Order</label>
+                            <select
+                                className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm text-gray-300 outline-none"
+                                value={opening.order || 'random'}
+                                onChange={e => onUpdateOpening({...opening, order: e.target.value})}
+                            >
+                                <option value="random">Random</option>
+                                <option value="sequential">Sequential</option>
+                            </select>
+                         </div>
+                         <div>
+                            <label className="block text-xs text-gray-500 mb-1">Ply Depth</label>
+                            <input
+                               type="number"
+                               className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm"
+                               value={opening.depth || 0}
+                               onChange={e => onUpdateOpening({...opening, depth: parseInt(e.target.value)})}
+                            />
+                         </div>
+                     </div>
+                 </div>
+              </div>
+
+              {/* Adjudication Settings */}
+              <div className="bg-[#1e1e1e] p-4 rounded border border-[#333]">
+                 <h3 className="text-sm font-bold text-gray-100 mb-3 flex items-center gap-2">
+                    <Shield size={14} className="text-red-400"/> Adjudication
+                 </h3>
+                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                     {/* Resign */}
+                     <div className="col-span-2 flex items-center gap-2 pb-2 border-b border-[#333]">
+                         <span className="text-xs font-bold text-gray-400 w-16">Resign</span>
+                         <input
+                            type="number" placeholder="Score (cp)"
+                            className="w-24 bg-[#111] border border-[#333] rounded px-2 py-1 text-sm"
+                            value={adjudication.resign_score || ''}
+                            onChange={e => onUpdateAdjudication({...adjudication, resign_score: parseInt(e.target.value)})}
+                         />
+                         <span className="text-xs text-gray-500">cp after</span>
+                         <input
+                            type="number" placeholder="Moves"
+                            className="w-20 bg-[#111] border border-[#333] rounded px-2 py-1 text-sm"
+                            value={adjudication.resign_move_count || ''}
+                            onChange={e => onUpdateAdjudication({...adjudication, resign_move_count: parseInt(e.target.value)})}
+                         />
+                         <span className="text-xs text-gray-500">moves</span>
+                     </div>
+
+                     {/* Draw */}
+                     <div className="col-span-2 flex items-center gap-2 pb-2 border-b border-[#333]">
+                         <span className="text-xs font-bold text-gray-400 w-16">Draw</span>
+                         <input
+                            type="number" placeholder="Moves"
+                            className="w-24 bg-[#111] border border-[#333] rounded px-2 py-1 text-sm"
+                            value={adjudication.draw_move_number || ''}
+                            onChange={e => onUpdateAdjudication({...adjudication, draw_move_number: parseInt(e.target.value)})}
+                         />
+                         <span className="text-xs text-gray-500">moves</span>
+                         <input
+                            type="number" placeholder="Count"
+                            className="w-20 bg-[#111] border border-[#333] rounded px-2 py-1 text-sm"
+                            value={adjudication.draw_move_count || ''}
+                            onChange={e => onUpdateAdjudication({...adjudication, draw_move_count: parseInt(e.target.value)})}
+                         />
+                         <span className="text-xs text-gray-500">ply</span>
+                     </div>
+
+                     {/* Tablebase / Syzygy */}
+                     <div className="col-span-2 pt-2 flex items-center justify-between">
+                         <div className="flex items-center gap-2">
+                             <input
+                                type="checkbox"
+                                checked={adjudication.result_adjudication}
+                                onChange={e => onUpdateAdjudication({...adjudication, result_adjudication: e.target.checked})}
+                                className="rounded bg-[#111] border-[#333]"
+                             />
+                             <span className="text-xs text-gray-300">Tablebase Adjudication</span>
+                         </div>
+                     </div>
+                 </div>
+              </div>
+
               {/* Game Rules */}
               <div className="bg-[#1e1e1e] p-4 rounded border border-[#333]">
                  <h3 className="text-sm font-bold text-gray-100 mb-3 flex items-center gap-2">
@@ -356,7 +514,32 @@ export default function SettingsModal({
                            onChange={e => onUpdateTournamentSettings({...tournamentSettings, gamesCount: parseInt(e.target.value) || 1})}
                         />
                      </div>
-                     <div className="flex items-center gap-2 mt-5">
+                     <div>
+                        <label className="block text-xs text-gray-500 mb-1">Mode</label>
+                        <select
+                           className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm text-gray-300 outline-none"
+                           value={tournamentSettings.mode}
+                           onChange={e => onUpdateTournamentSettings({...tournamentSettings, mode: e.target.value as any})}
+                        >
+                            <option value="Match">Match</option>
+                            <option value="RoundRobin">Round Robin</option>
+                            <option value="Gauntlet">Gauntlet</option>
+                            <option value="Swiss">Swiss</option>
+                            <option value="Pyramid">Pyramid</option>
+                        </select>
+                     </div>
+                     <div>
+                        <label className="block text-xs text-gray-500 mb-1">Variant</label>
+                        <select
+                            className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm text-gray-300 outline-none"
+                            value={tournamentSettings.variant}
+                            onChange={e => onUpdateTournamentSettings({...tournamentSettings, variant: e.target.value as 'standard' | 'chess960'})}
+                        >
+                            <option value="standard">Standard</option>
+                            <option value="chess960">Chess960 (Fischer Random)</option>
+                        </select>
+                     </div>
+                     <div className="flex items-center gap-2 mt-6">
                          <input
                             type="checkbox"
                             checked={tournamentSettings.swapSides}

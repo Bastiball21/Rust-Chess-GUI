@@ -77,7 +77,7 @@ interface SprtSettings {
 }
 
 interface TournamentSettings {
-  mode: 'Match' | 'RoundRobin' | 'Gauntlet' | 'Swiss';
+  mode: 'Match' | 'RoundRobin' | 'Gauntlet' | 'Swiss' | 'Pyramid';
   gamesCount: number;
   swapSides: boolean;
   concurrency: number;
