@@ -1,56 +1,7 @@
 import React from 'react';
 import { X, Plus, Trash2, FileText, MoreHorizontal, Clock, Cpu, Shield, BookOpen } from 'lucide-react';
 import { save, open } from '@tauri-apps/plugin-dialog';
-
-interface EngineConfig {
-  id?: string;
-  name: string;
-  path: string;
-  options: [string, string][];
-  protocol?: string;
-  logo_path?: string;
-}
-
-interface AdjudicationConfig {
-  resign_score: number | null;
-  resign_move_count: number | null;
-  draw_score: number | null;
-  draw_move_number: number | null;
-  draw_move_count: number | null;
-  result_adjudication: boolean;
-  syzygy_path: string | null;
-}
-
-interface OpeningConfig {
-  file: string | null;
-  fen: string | null;
-  depth: number | null;
-  order: string | null;
-  book_path: string | null;
-}
-
-interface SprtSettings {
-    enabled: boolean;
-    h0Elo: number;
-    h1Elo: number;
-    drawRatio: number;
-    alpha: number;
-    beta: number;
-}
-
-interface TournamentSettings {
-    mode: 'Match' | 'RoundRobin' | 'Gauntlet' | 'Swiss' | 'Pyramid';
-    gamesCount: number;
-    swapSides: boolean;
-    concurrency: number;
-    timeControl: { baseMs: number; incMs: number };
-    eventName: string;
-    pgnPath: string;
-    overwritePgn: boolean;
-    variant: 'standard' | 'chess960';
-    sprt: SprtSettings;
-    disabledEngineIds: string[];
-}
+import { EngineConfig, AdjudicationConfig, OpeningConfig, TournamentSettings } from '../types';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -82,6 +33,8 @@ export default function SettingsModal({
   onUpdateTournamentSettings,
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = React.useState(initialTab);
+  const [highlightLegal, setHighlightLegal] = React.useState(localStorage.getItem('pref_highlight_legal') === 'true');
+  const [showArrows, setShowArrows] = React.useState(localStorage.getItem('pref_show_arrows') !== 'false');
 
   React.useEffect(() => {
       if (isOpen) setActiveTab(initialTab);
@@ -485,7 +438,36 @@ export default function SettingsModal({
                      </div>
 
                      {/* Tablebase / Syzygy */}
-                     <div className="col-span-2 pt-2 flex items-center justify-between">
+                     <div className="col-span-2 pt-2 border-t border-[#333] mt-2">
+                         <label className="block text-xs text-gray-500 mb-1">Syzygy Path</label>
+                         <div className="flex gap-2 mb-2">
+                            <input
+                               className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1.5 text-sm text-gray-400 outline-none"
+                               value={adjudication.syzygy_path || ''}
+                               placeholder="Select folder..."
+                               readOnly
+                            />
+                            <button
+                                onClick={async () => {
+                                    try {
+                                        const selected = await open({
+                                            directory: true,
+                                            multiple: false,
+                                            defaultPath: adjudication.syzygy_path || undefined,
+                                        });
+                                        if (selected && typeof selected === 'string') {
+                                            onUpdateAdjudication({ ...adjudication, syzygy_path: selected });
+                                        }
+                                    } catch (err) {
+                                        console.error('Failed to open folder dialog:', err);
+                                    }
+                                }}
+                                className="bg-[#333] hover:bg-[#444] text-gray-200 px-3 rounded border border-[#444]"
+                            >
+                                <MoreHorizontal size={16} />
+                            </button>
+                         </div>
+
                          <div className="flex items-center gap-2">
                              <input
                                 type="checkbox"
@@ -556,8 +538,40 @@ export default function SettingsModal({
 
           {/* --- GENERAL TAB --- */}
           {activeTab === 'general' && (
-            <div className="text-center text-gray-500 py-10">
-              <p>General application settings (Appearance, Sounds) can go here.</p>
+            <div className="space-y-6">
+                <div className="bg-[#1e1e1e] p-4 rounded border border-[#333]">
+                    <h3 className="text-sm font-bold text-gray-100 mb-3 flex items-center gap-2">
+                        <FileText size={14} className="text-blue-400"/> Appearance
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={highlightLegal}
+                                onChange={(e) => {
+                                    setHighlightLegal(e.target.checked);
+                                    localStorage.setItem('pref_highlight_legal', e.target.checked.toString());
+                                    window.dispatchEvent(new Event('storage'));
+                                }}
+                                className="rounded bg-[#111] border-[#333]"
+                            />
+                            <span className="text-sm text-gray-300">Highlight Legal Moves</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={showArrows}
+                                onChange={(e) => {
+                                    setShowArrows(e.target.checked);
+                                    localStorage.setItem('pref_show_arrows', e.target.checked.toString());
+                                    window.dispatchEvent(new Event('storage'));
+                                }}
+                                className="rounded bg-[#111] border-[#333]"
+                            />
+                            <span className="text-sm text-gray-300">Show PV Arrows</span>
+                        </div>
+                    </div>
+                </div>
             </div>
           )}
 

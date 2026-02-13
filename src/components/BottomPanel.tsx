@@ -1,5 +1,5 @@
 import React from 'react';
-import { StandingsEntry, ScheduledGame } from '../App';
+import { StandingsEntry, ScheduledGame } from '../types';
 import { Trophy, List, AlertTriangle, Activity, FileText } from 'lucide-react';
 
 interface BottomPanelProps {
