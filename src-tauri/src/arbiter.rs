@@ -5,6 +5,8 @@ use shakmaty::{Chess, Position, Move, Role, Color, uci::Uci, CastlingMode, Outco
 use shakmaty::fen::Fen;
 use tokio::sync::{mpsc, Semaphore, broadcast};
 use tokio::time::{Instant, Duration, sleep, timeout};
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use rand::seq::SliceRandom;
@@ -122,11 +124,24 @@ impl Arbiter {
         let (pgn_tx, mut pgn_rx) = mpsc::channel::<String>(100);
 
         let pgn_path = config.pgn_path.clone().unwrap_or_else(|| "tournament.pgn".to_string());
+
+        if config.overwrite_pgn {
+            if let Err(e) = tokio::fs::write(&pgn_path, "").await {
+                 let _ = error_tx.send(TournamentError {
+                        engine_id: None,
+                        engine_name: "PGN Writer".to_string(),
+                        game_id: None,
+                        message: format!("Failed to overwrite/clear PGN file {}: {}", pgn_path, e),
+                        failure_count: 0,
+                        disabled: false,
+                 }).await;
+            }
+        }
+
         let pgn_error_tx = error_tx.clone();
 
         tokio::spawn(async move {
-            use std::io::Write;
-            let mut file = match std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
+            let mut file = match OpenOptions::new().create(true).append(true).open(&pgn_path).await {
                 Ok(handle) => Some(handle),
                 Err(err) => {
                     let _ = pgn_error_tx.send(TournamentError {
@@ -144,7 +159,7 @@ impl Arbiter {
 
             while let Some(pgn) = pgn_rx.recv().await {
                 if file.is_none() {
-                    match std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
+                    match OpenOptions::new().create(true).append(true).open(&pgn_path).await {
                         Ok(handle) => file = Some(handle),
                         Err(err) => {
                             let _ = pgn_error_tx.send(TournamentError {
@@ -162,7 +177,7 @@ impl Arbiter {
                 }
 
                 if let Some(handle) = file.as_mut() {
-                    if let Err(err) = handle.write_all(pgn.as_bytes()) {
+                    if let Err(err) = handle.write_all(pgn.as_bytes()).await {
                         let _ = pgn_error_tx.send(TournamentError {
                             engine_id: None,
                             engine_name: "PGN Writer".to_string(),
@@ -173,8 +188,8 @@ impl Arbiter {
                         }).await;
                         eprintln!("Failed to write PGN to {}: {}", pgn_path, err);
                         file = None;
-                        if let Ok(mut retry_handle) = std::fs::OpenOptions::new().create(true).append(true).open(&pgn_path) {
-                            if let Err(retry_err) = retry_handle.write_all(pgn.as_bytes()) {
+                        if let Ok(mut retry_handle) = OpenOptions::new().create(true).append(true).open(&pgn_path).await {
+                            if let Err(retry_err) = retry_handle.write_all(pgn.as_bytes()).await {
                                 let _ = pgn_error_tx.send(TournamentError {
                                     engine_id: None,
                                     engine_name: "PGN Writer".to_string(),
@@ -184,7 +199,7 @@ impl Arbiter {
                                     disabled: false,
                                 }).await;
                                 eprintln!("Failed to retry PGN write to {}: {}", pgn_path, retry_err);
-                            } else if let Err(retry_err) = retry_handle.flush() {
+                            } else if let Err(retry_err) = retry_handle.flush().await {
                                 let _ = pgn_error_tx.send(TournamentError {
                                     engine_id: None,
                                     engine_name: "PGN Writer".to_string(),
@@ -201,7 +216,7 @@ impl Arbiter {
                         continue;
                     }
 
-                    if let Err(err) = handle.flush() {
+                    if let Err(err) = handle.flush().await {
                         let _ = pgn_error_tx.send(TournamentError {
                             engine_id: None,
                             engine_name: "PGN Writer".to_string(),
@@ -1095,7 +1110,12 @@ async fn play_game_static(
                         }
                         if line.starts_with("bestmove") {
                             let parts: Vec<&str> = line.split_whitespace().collect();
-                            if parts.len() > 1 { best_move_str = parts[1].to_string(); }
+                            if parts.len() > 1 {
+                                let mv = parts[1];
+                                if mv != "(none)" {
+                                    best_move_str = mv.to_string();
+                                }
+                            }
                             return Ok(());
                         }
                      },
@@ -1126,6 +1146,7 @@ async fn play_game_static(
             Err(_) => {
                  // Timed out
                  println!("Engine timed out!");
+                 let _ = active_engine.kill().await;
                  game_result = match turn { Color::White => "0-1", Color::Black => "1-0" }.to_string();
                  let _ = game_update_tx.send(GameUpdate {
                     fen: pos.to_fen_string(), last_move: None, white_time: white_time as u64, black_time: black_time as u64,

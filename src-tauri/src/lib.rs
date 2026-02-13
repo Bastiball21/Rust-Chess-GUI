@@ -85,7 +85,7 @@ fn handle_schedule_progress_update(
     update: &ScheduledGame,
 ) {
     let (total_games, remaining_games) = {
-        let mut tracker = progress_tracker.lock().unwrap();
+        let mut tracker = progress_tracker.lock().unwrap_or_else(|e| e.into_inner());
         tracker.apply_update(update)
     };
     update_taskbar_progress(app, total_games, remaining_games);
@@ -114,10 +114,10 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, mut config: Tou
             }
         }
     }
-    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner()); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     {
-        let mut tracker = state.progress_tracker.lock().unwrap();
+        let mut tracker = state.progress_tracker.lock().unwrap_or_else(|e| e.into_inner());
         tracker.reset();
     }
     let (game_tx, mut game_rx) = mpsc::channel::<GameUpdate>(100);
@@ -128,7 +128,7 @@ async fn start_match(app: AppHandle, state: State<'_, AppState>, mut config: Tou
 
     let arbiter = Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx, error_tx).await.map_err(|e| e.to_string())?;
     let arbiter = Arc::new(arbiter);
-    { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); *arbiter_lock = Some(arbiter.clone()); }
+    { let mut arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner()); *arbiter_lock = Some(arbiter.clone()); }
 
     let app_handle = app.clone();
     tokio::spawn(async move { while let Some(update) = game_rx.recv().await { let _ = app_handle.emit("game-update", update); } });
@@ -206,10 +206,10 @@ async fn resume_match(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
     config.resume_state_path = Some(path.to_string_lossy().to_string());
     config.resume_from_state = true;
 
-    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner()); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     {
-        let mut tracker = state.progress_tracker.lock().unwrap();
+        let mut tracker = state.progress_tracker.lock().unwrap_or_else(|e| e.into_inner());
         tracker.reset();
     }
 
@@ -222,7 +222,7 @@ async fn resume_match(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
     let arbiter = Arbiter::new(config, game_tx, stats_tx, tourney_stats_tx, schedule_update_tx, error_tx).await.map_err(|e| e.to_string())?;
     arbiter.load_schedule_state(resume_state.schedule).await;
     let arbiter = Arc::new(arbiter);
-    { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); *arbiter_lock = Some(arbiter.clone()); }
+    { let mut arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner()); *arbiter_lock = Some(arbiter.clone()); }
 
     let app_handle = app.clone();
     tokio::spawn(async move { while let Some(update) = game_rx.recv().await { let _ = app_handle.emit("game-update", update); } });
@@ -270,21 +270,21 @@ async fn resume_match(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
 
 #[tauri::command]
 async fn stop_match(state: State<'_, AppState>) -> Result<(), String> {
-    let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap(); let arb = arbiter_lock.clone(); *arbiter_lock = None; arb };
+    let maybe_arbiter = { let mut arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner()); let arb = arbiter_lock.clone(); *arbiter_lock = None; arb };
     if let Some(arbiter) = maybe_arbiter { arbiter.stop().await; }
     Ok(())
 }
 
 #[tauri::command]
 async fn pause_match(state: State<'_, AppState>, paused: bool) -> Result<(), String> {
-    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner()); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.set_paused(paused).await; }
     Ok(())
 }
 
 #[tauri::command]
 async fn update_remaining_rounds(state: State<'_, AppState>, remaining_rounds: u32) -> Result<(), String> {
-    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner()); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter {
         arbiter.update_remaining_rounds(remaining_rounds).await.map_err(|e| e.to_string())?;
     }
@@ -293,7 +293,7 @@ async fn update_remaining_rounds(state: State<'_, AppState>, remaining_rounds: u
 
 #[tauri::command]
 async fn set_disabled_engines(state: State<'_, AppState>, disabled_engine_ids: Vec<String>) -> Result<(), String> {
-    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap(); arbiter_lock.clone() };
+    let maybe_arbiter = { let arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner()); arbiter_lock.clone() };
     if let Some(arbiter) = maybe_arbiter { arbiter.set_disabled_engine_ids(disabled_engine_ids).await; }
     Ok(())
 }
@@ -338,7 +338,7 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 let state = window.state::<AppState>();
                 let maybe_arbiter = {
-                    let mut arbiter_lock = state.current_arbiter.lock().unwrap();
+                    let mut arbiter_lock = state.current_arbiter.lock().unwrap_or_else(|e| e.into_inner());
                     let arbiter = arbiter_lock.clone();
                     *arbiter_lock = None;
                     arbiter

@@ -84,6 +84,7 @@ interface TournamentSettings {
   timeControl: { baseMs: number; incMs: number };
   eventName: string;
   pgnPath: string;
+  overwritePgn: boolean;
   variant: 'standard' | 'chess960';
   sprt: SprtSettings;
   disabledEngineIds: string[];
@@ -124,6 +125,7 @@ function App() {
       timeControl: { baseMs: 60000, incMs: 1000 },
       eventName: '',
       pgnPath: 'tournament.pgn',
+      overwritePgn: false,
       variant: 'standard',
       disabledEngineIds: [],
       sprt: {
@@ -172,6 +174,7 @@ function App() {
   const lastAppliedMoveRef = useRef<string | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const gameUpdateRef = useRef<GameUpdate | null>(null);
+  const lastStatsUpdateRef = useRef<number>(0);
 
   const normalizeEngines = (nextEngines: EngineConfig[]) => (
       nextEngines.map(engine => (engine.id ? engine : { ...engine, id: crypto.randomUUID() }))
@@ -226,11 +229,16 @@ function App() {
                 const from = m.substring(0, 2);
                 const to = m.substring(2, 4);
                 const promotion = m.length > 4 ? m.substring(4) : undefined;
-                const moveResult = chessRef.current.move({ from, to, promotion });
-                if (moveResult?.san) {
-                    setMoves(prev => [...prev, moveResult.san]);
-                    lastAppliedMoveRef.current = m;
-                } else {
+                try {
+                    const moveResult = chessRef.current.move({ from, to, promotion });
+                    if (moveResult?.san) {
+                        setMoves(prev => [...prev, moveResult.san]);
+                        lastAppliedMoveRef.current = m;
+                    } else {
+                        chessRef.current = new Chess(payload.fen === "start" ? undefined : payload.fen);
+                    }
+                } catch (error) {
+                    console.warn("Frontend chess.js validation failed:", error);
                     chessRef.current = new Chess(payload.fen === "start" ? undefined : payload.fen);
                 }
             }
@@ -238,26 +246,31 @@ function App() {
     });
 
     const unlistenStats = listen<EngineStats>('engine-stats', (event) => {
-        // Need to know which engine color it corresponds to
-        // We can infer from `engine_idx` in `gameUpdate` or checking against engines list
-        // Simplified: The backend sends stats. In `arbiter.rs`, we know engine indices.
-        // We need to map `event.payload.engine_idx` to white/black.
-        // For now, rely on `gameUpdate` having indices.
-        setGameUpdate(curr => {
-            if (!curr) return null;
-            if (event.payload.engine_idx === curr.white_engine_idx) setWhiteStats(event.payload);
-            if (event.payload.engine_idx === curr.black_engine_idx) setBlackStats(event.payload);
-            return curr;
-        });
-        const activeGame = gameUpdateRef.current;
-        if (activeGame && event.payload.game_id === activeGame.game_id) {
-            const activeColor = activeGame.fen.split(' ')[1] === 'w' ? 'white' : 'black';
-            const activeEngineIdx = activeColor === 'white' ? activeGame.white_engine_idx : activeGame.black_engine_idx;
-            if (event.payload.engine_idx === activeEngineIdx) {
-                const score = event.payload.score_mate !== null && event.payload.score_mate !== undefined
-                    ? Math.sign(event.payload.score_mate) * 99
-                    : (event.payload.score_cp || 0) / 100;
-                setEvalHistory(prev => [...prev.slice(-99), score]);
+        const now = Date.now();
+        if (now - lastStatsUpdateRef.current > 100) {
+            lastStatsUpdateRef.current = now;
+
+            // Need to know which engine color it corresponds to
+            // We can infer from `engine_idx` in `gameUpdate` or checking against engines list
+            // Simplified: The backend sends stats. In `arbiter.rs`, we know engine indices.
+            // We need to map `event.payload.engine_idx` to white/black.
+            // For now, rely on `gameUpdate` having indices.
+            setGameUpdate(curr => {
+                if (!curr) return null;
+                if (event.payload.engine_idx === curr.white_engine_idx) setWhiteStats(event.payload);
+                if (event.payload.engine_idx === curr.black_engine_idx) setBlackStats(event.payload);
+                return curr;
+            });
+            const activeGame = gameUpdateRef.current;
+            if (activeGame && event.payload.game_id === activeGame.game_id) {
+                const activeColor = activeGame.fen.split(' ')[1] === 'w' ? 'white' : 'black';
+                const activeEngineIdx = activeColor === 'white' ? activeGame.white_engine_idx : activeGame.black_engine_idx;
+                if (event.payload.engine_idx === activeEngineIdx) {
+                    const score = event.payload.score_mate !== null && event.payload.score_mate !== undefined
+                        ? Math.sign(event.payload.score_mate) * 99
+                        : (event.payload.score_cp || 0) / 100;
+                    setEvalHistory(prev => [...prev.slice(-99), score]);
+                }
             }
         }
     });
@@ -353,6 +366,7 @@ function App() {
                   } : undefined,
                   disabled_engine_ids: [],
                   pgn_path: tournamentSettings.pgnPath,
+                  overwrite_pgn: tournamentSettings.overwritePgn,
                   event_name: tournamentSettings.eventName || undefined,
               }
           });

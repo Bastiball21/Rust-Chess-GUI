@@ -59,6 +59,7 @@ interface TournamentSettings {
   timeControl: { baseMs: number; incMs: number };
   eventName: string;
   pgnPath: string;
+  overwritePgn: boolean;
   variant: 'standard' | 'chess960';
   sprt: SprtSettings;
   disabledEngineIds: string[];
@@ -574,6 +575,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                             onChange={e => updateTournament({ pgnPath: e.target.value })}
                                             placeholder="tournament.pgn"
                                         />
+                                        <label className="flex items-center gap-2 text-xs text-gray-400 mt-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={tournamentSettings.overwritePgn}
+                                                onChange={e => updateTournament({ overwritePgn: e.target.checked })}
+                                                className="accent-blue-500"
+                                            />
+                                            Overwrite PGN file (start fresh)
+                                        </label>
                                     </div>
                                 </section>
 
