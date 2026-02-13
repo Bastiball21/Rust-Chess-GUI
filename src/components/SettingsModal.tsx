@@ -530,6 +530,34 @@ export default function SettingsModal({
                          />
                          <span className="text-sm text-gray-300">Swap Sides</span>
                      </div>
+                     <div className="flex items-center gap-2 mt-6">
+                         <input
+                            type="checkbox"
+                            checked={tournamentSettings.ponder}
+                            onChange={e => onUpdateTournamentSettings({...tournamentSettings, ponder: e.target.checked})}
+                            className="rounded bg-[#111] border-[#333]"
+                         />
+                         <span className="text-sm text-gray-300">Ponder</span>
+                     </div>
+                     <div>
+                        <label className="block text-xs text-gray-500 mb-1">Concurrency</label>
+                        <input
+                           type="number"
+                           min="1" max="128"
+                           className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm"
+                           value={tournamentSettings.concurrency}
+                           onChange={e => onUpdateTournamentSettings({...tournamentSettings, concurrency: Math.max(1, parseInt(e.target.value) || 1)})}
+                        />
+                     </div>
+                     <div>
+                        <label className="block text-xs text-gray-500 mb-1">Move Overhead (ms)</label>
+                        <input
+                           type="number"
+                           className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm"
+                           value={tournamentSettings.moveOverheadMs}
+                           onChange={e => onUpdateTournamentSettings({...tournamentSettings, moveOverheadMs: parseInt(e.target.value) || 0})}
+                        />
+                     </div>
                  </div>
               </div>
 

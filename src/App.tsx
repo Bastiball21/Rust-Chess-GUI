@@ -19,6 +19,15 @@ import {
   OpeningConfig
 } from './types';
 
+function loadStored<T>(key: string, defaultVal: T): T {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : defaultVal;
+  } catch {
+    return defaultVal;
+  }
+}
+
 function App() {
   const [fen, setFen] = useState("start");
   const [orientation] = useState<'white' | 'black'>('white');
@@ -28,46 +37,39 @@ function App() {
   const [blackStats, setBlackStats] = useState<EngineStats | null>(null);
   const [moves, setMoves] = useState<string[]>([]);
   const [evalHistory, setEvalHistory] = useState<number[]>([]);
-  const [tournamentSettings, setTournamentSettings] = useState<TournamentSettings>({
-      mode: 'Match',
-      gamesCount: 100,
-      swapSides: true,
-      concurrency: 1,
-      timeControl: { baseMs: 60000, incMs: 1000 },
-      eventName: '',
-      pgnPath: 'tournament.pgn',
-      overwritePgn: false,
-      variant: 'standard',
-      disabledEngineIds: [],
-      sprt: {
-          enabled: false,
-          h0Elo: 0,
-          h1Elo: 5,
-          drawRatio: 0.5,
-          alpha: 0.05,
-          beta: 0.05,
-      },
-  });
 
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [engines, setEngines] = useState<EngineConfig[]>([]);
-  const [adjudication, setAdjudication] = useState<AdjudicationConfig>({
-      resign_score: 600,
-      resign_move_count: 5,
-      draw_score: 5,
-      draw_move_number: 40,
-      draw_move_count: 20,
-      result_adjudication: true,
-      syzygy_path: null,
-  });
-  const [opening, setOpening] = useState<OpeningConfig>({
-      file: null,
-      fen: null,
-      depth: 0,
-      order: "sequential",
-      book_path: null,
-  });
+
+  const [engines, setEngines] = useState<EngineConfig[]>(() => loadStored('app_engines', []));
+
+  const [adjudication, setAdjudication] = useState<AdjudicationConfig>(() => loadStored('app_adjudication', {
+      resign_score: 600, resign_move_count: 5,
+      draw_score: 5, draw_move_number: 40, draw_move_count: 20,
+      result_adjudication: true, syzygy_path: null,
+  }));
+
+  const [opening, setOpening] = useState<OpeningConfig>(() => loadStored('app_opening', {
+      file: null, fen: null, depth: 0, order: "sequential", book_path: null,
+  }));
+
+  const [tournamentSettings, setTournamentSettings] = useState<TournamentSettings>(() => loadStored('app_tournament', {
+      mode: 'Match', gamesCount: 100, swapSides: true, concurrency: 1,
+      timeControl: { baseMs: 60000, incMs: 1000 },
+      eventName: "My Tournament", pgnPath: "tournament.pgn", overwritePgn: false,
+      variant: 'standard', disabledEngineIds: [],
+      sprt: { enabled: false, h0Elo: 0, h1Elo: 5, drawRatio: 0.5, alpha: 0.05, beta: 0.05 },
+      ponder: false,
+      moveOverheadMs: 50,
+  }));
+
+  // Save changes automatically
+  useEffect(() => {
+    localStorage.setItem('app_engines', JSON.stringify(engines));
+    localStorage.setItem('app_adjudication', JSON.stringify(adjudication));
+    localStorage.setItem('app_opening', JSON.stringify(opening));
+    localStorage.setItem('app_tournament', JSON.stringify(tournamentSettings));
+  }, [engines, adjudication, opening, tournamentSettings]);
 
   // Tournament State
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
@@ -266,6 +268,8 @@ function App() {
                   opening,
                   variant: tournamentSettings.variant,
                   concurrency: tournamentSettings.concurrency > 0 ? tournamentSettings.concurrency : undefined,
+                  ponder: tournamentSettings.ponder,
+                  move_overhead: tournamentSettings.moveOverheadMs,
                   adjudication,
                   sprt_enabled: tournamentSettings.sprt.enabled,
                   sprt_config: tournamentSettings.sprt.enabled ? {

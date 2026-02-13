@@ -47,6 +47,8 @@ export interface TournamentSettings {
   variant: 'standard' | 'chess960';
   sprt: SprtSettings;
   disabledEngineIds: string[];
+  ponder: boolean;
+  moveOverheadMs: number;
 }
 
 export interface GameUpdate {
