@@ -8,104 +8,24 @@ import StatsPanel from './components/StatsPanel';
 import BottomPanel from './components/BottomPanel';
 import EvalMovePanel from './components/EvalMovePanel';
 import { Pause, Play, Settings, Square } from 'lucide-react';
+import {
+  GameUpdate,
+  EngineStats,
+  ScheduledGame,
+  StandingsEntry,
+  EngineConfig,
+  TournamentSettings,
+  AdjudicationConfig,
+  OpeningConfig
+} from './types';
 
-// --- Types --- (Centralize these in types.ts later)
-export interface GameUpdate {
-  fen: string;
-  last_move: string | null;
-  white_time: number;
-  black_time: number;
-  move_number: number;
-  result: string | null;
-  white_engine_idx: number;
-  black_engine_idx: number;
-  game_id: number;
-}
-
-export interface EngineStats {
-  depth: number;
-  score_cp: number | null;
-  score_mate: number | null;
-  nodes: number;
-  nps: number;
-  pv: string;
-  engine_idx: number;
-  game_id: number;
-  tb_hits?: number;
-  hash_full?: number;
-}
-
-export interface ScheduledGame {
-  id: number;
-  white_name: string;
-  black_name: string;
-  state: string;
-  result: string | null;
-}
-
-export interface StandingsEntry {
-  rank: number;
-  engine_name: string;
-  engine_id?: string;
-  games_played: number;
-  points: number;
-  score_percent: number;
-  wins: number;
-  losses: number;
-  draws: number;
-  crashes: number;
-  sb: number;
-  elo: number;
-}
-
-interface EngineConfig {
-  id?: string;
-  name: string;
-  path: string;
-  options: [string, string][];
-  protocol?: string;
-  logo_path?: string;
-}
-
-interface SprtSettings {
-  enabled: boolean;
-  h0Elo: number;
-  h1Elo: number;
-  drawRatio: number;
-  alpha: number;
-  beta: number;
-}
-
-interface TournamentSettings {
-  mode: 'Match' | 'RoundRobin' | 'Gauntlet' | 'Swiss';
-  gamesCount: number;
-  swapSides: boolean;
-  concurrency: number;
-  timeControl: { baseMs: number; incMs: number };
-  eventName: string;
-  pgnPath: string;
-  overwritePgn: boolean;
-  variant: 'standard' | 'chess960';
-  sprt: SprtSettings;
-  disabledEngineIds: string[];
-}
-
-interface AdjudicationConfig {
-  resign_score: number | null;
-  resign_move_count: number | null;
-  draw_score: number | null;
-  draw_move_number: number | null;
-  draw_move_count: number | null;
-  result_adjudication: boolean;
-  syzygy_path: string | null;
-}
-
-interface OpeningConfig {
-  file: string | null;
-  fen: string | null;
-  depth: number | null;
-  order: string | null;
-  book_path: string | null;
+function loadStored<T>(key: string, defaultVal: T): T {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : defaultVal;
+  } catch {
+    return defaultVal;
+  }
 }
 
 function App() {
@@ -117,46 +37,39 @@ function App() {
   const [blackStats, setBlackStats] = useState<EngineStats | null>(null);
   const [moves, setMoves] = useState<string[]>([]);
   const [evalHistory, setEvalHistory] = useState<number[]>([]);
-  const [tournamentSettings, setTournamentSettings] = useState<TournamentSettings>({
-      mode: 'Match',
-      gamesCount: 100,
-      swapSides: true,
-      concurrency: 1,
-      timeControl: { baseMs: 60000, incMs: 1000 },
-      eventName: '',
-      pgnPath: 'tournament.pgn',
-      overwritePgn: false,
-      variant: 'standard',
-      disabledEngineIds: [],
-      sprt: {
-          enabled: false,
-          h0Elo: 0,
-          h1Elo: 5,
-          drawRatio: 0.5,
-          alpha: 0.05,
-          beta: 0.05,
-      },
-  });
 
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [engines, setEngines] = useState<EngineConfig[]>([]);
-  const [adjudication, setAdjudication] = useState<AdjudicationConfig>({
-      resign_score: 600,
-      resign_move_count: 5,
-      draw_score: 5,
-      draw_move_number: 40,
-      draw_move_count: 20,
-      result_adjudication: true,
-      syzygy_path: null,
-  });
-  const [opening, setOpening] = useState<OpeningConfig>({
-      file: null,
-      fen: null,
-      depth: 0,
-      order: "sequential",
-      book_path: null,
-  });
+
+  const [engines, setEngines] = useState<EngineConfig[]>(() => loadStored('app_engines', []));
+
+  const [adjudication, setAdjudication] = useState<AdjudicationConfig>(() => loadStored('app_adjudication', {
+      resign_score: 600, resign_move_count: 5,
+      draw_score: 5, draw_move_number: 40, draw_move_count: 20,
+      result_adjudication: true, syzygy_path: null,
+  }));
+
+  const [opening, setOpening] = useState<OpeningConfig>(() => loadStored('app_opening', {
+      file: null, fen: null, depth: 0, order: "sequential", book_path: null,
+  }));
+
+  const [tournamentSettings, setTournamentSettings] = useState<TournamentSettings>(() => loadStored('app_tournament', {
+      mode: 'Match', gamesCount: 100, swapSides: true, concurrency: 1,
+      timeControl: { baseMs: 60000, incMs: 1000 },
+      eventName: "My Tournament", pgnPath: "tournament.pgn", overwritePgn: false,
+      variant: 'standard', disabledEngineIds: [],
+      sprt: { enabled: false, h0Elo: 0, h1Elo: 5, drawRatio: 0.5, alpha: 0.05, beta: 0.05 },
+      ponder: false,
+      moveOverheadMs: 50,
+  }));
+
+  // Save changes automatically
+  useEffect(() => {
+    localStorage.setItem('app_engines', JSON.stringify(engines));
+    localStorage.setItem('app_adjudication', JSON.stringify(adjudication));
+    localStorage.setItem('app_opening', JSON.stringify(opening));
+    localStorage.setItem('app_tournament', JSON.stringify(tournamentSettings));
+  }, [engines, adjudication, opening, tournamentSettings]);
 
   // Tournament State
   const [schedule, setSchedule] = useState<ScheduledGame[]>([]);
@@ -355,6 +268,8 @@ function App() {
                   opening,
                   variant: tournamentSettings.variant,
                   concurrency: tournamentSettings.concurrency > 0 ? tournamentSettings.concurrency : undefined,
+                  ponder: tournamentSettings.ponder,
+                  move_overhead: tournamentSettings.moveOverheadMs,
                   adjudication,
                   sprt_enabled: tournamentSettings.sprt.enabled,
                   sprt_config: tournamentSettings.sprt.enabled ? {

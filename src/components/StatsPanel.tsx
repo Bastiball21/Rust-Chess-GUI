@@ -1,6 +1,6 @@
 import React from 'react';
 import { EnginePanel } from './EnginePanel';
-import { EngineStats, GameUpdate } from '../App';
+import { EngineStats, GameUpdate } from '../types';
 
 interface StatsPanelProps {
   gameUpdate: GameUpdate | null;
