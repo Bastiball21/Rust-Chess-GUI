@@ -70,6 +70,7 @@ async fn test_match_simulation() {
         variant: "standard".to_string(),
         concurrency: Some(1),
         pgn_path: Some(pgn_path.clone()),
+        overwrite_pgn: false,
         event_name: None,
         disabled_engine_ids: Vec::new(),
         resume_state_path: None,
