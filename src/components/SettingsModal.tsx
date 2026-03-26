@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Plus, Trash2, FileText, MoreHorizontal, Clock, Cpu, Shield, BookOpen, Settings } from 'lucide-react';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { EngineConfig, AdjudicationConfig, OpeningConfig, TournamentSettings } from '../types';
@@ -32,12 +32,12 @@ export default function SettingsModal({
   tournamentSettings,
   onUpdateTournamentSettings,
 }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = React.useState(initialTab);
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [expandedEngineIdx, setExpandedEngineIdx] = useState<number | null>(null);
-  const [highlightLegal, setHighlightLegal] = React.useState(localStorage.getItem('pref_highlight_legal') === 'true');
-  const [showArrows, setShowArrows] = React.useState(localStorage.getItem('pref_show_arrows') !== 'false');
+  const [highlightLegal, setHighlightLegal] = useState(localStorage.getItem('pref_highlight_legal') === 'true');
+  const [showArrows, setShowArrows] = useState(localStorage.getItem('pref_show_arrows') !== 'false');
 
-  React.useEffect(() => {
+  useEffect(() => {
       if (isOpen) setActiveTab(initialTab);
   }, [isOpen, initialTab]);
 
@@ -191,9 +191,27 @@ export default function SettingsModal({
           {/* --- ENGINES TAB --- */}
           {activeTab === 'engines' && (
             <div className="space-y-4">
-              {engines.map((engine, idx) => (
-                <div key={engine.id || idx} className="bg-[#1e1e1e] p-4 rounded border border-[#333] space-y-3">
-                  <div className="flex gap-2">
+              {engines.map((engine, idx) => {
+                const disabledIds = tournamentSettings.disabledEngineIds || [];
+                const engineId = engine.id || `temp-id-${idx}`;
+                const isEnabled = !disabledIds.includes(engineId);
+                return (
+                <div key={engineId} className={`p-4 rounded border transition-colors space-y-3 ${isEnabled ? 'bg-[#1e1e1e] border-[#333]' : 'bg-[#151515] border-[#222] opacity-60'}`}>
+                  <div className="flex gap-2 items-start">
+                    <div className="pt-6">
+                        <input
+                            type="checkbox"
+                            checked={isEnabled}
+                            onChange={(e) => {
+                                const newDisabledIds = e.target.checked
+                                    ? disabledIds.filter(id => id !== engineId)
+                                    : [...disabledIds, engineId];
+                                onUpdateTournamentSettings({...tournamentSettings, disabledEngineIds: newDisabledIds});
+                            }}
+                            className="w-4 h-4 rounded bg-[#111] border-[#333] cursor-pointer"
+                            title={isEnabled ? "Disable engine for tournament" : "Enable engine for tournament"}
+                        />
+                    </div>
                     <div className="flex-1">
                       <label className="block text-xs font-bold text-gray-500 mb-1">Name</label>
                       <input
@@ -283,7 +301,7 @@ export default function SettingsModal({
                     </div>
                   )}
                 </div>
-              ))}
+              )})}
               <button
                 onClick={addEngine}
                 className="w-full py-2 border-2 border-dashed border-[#444] text-gray-400 hover:border-blue-500 hover:text-blue-400 rounded flex items-center justify-center gap-2 font-bold transition-all"

@@ -251,7 +251,11 @@ function App() {
   }, [activeStats?.pv, lastMove, prefArrows]);
 
   const startMatch = async () => {
-      const enabledEngines = engines.filter(engine => !tournamentSettings.disabledEngineIds.includes(engine.id ?? ''));
+      const disabledIds = tournamentSettings.disabledEngineIds || [];
+      const enabledEngines = engines.filter((engine, idx) => {
+          const engineId = engine.id || `temp-id-${idx}`;
+          return !disabledIds.includes(engineId);
+      });
       if (enabledEngines.length < 2) {
           alert("Please add at least 2 engines.");
           setIsSettingsOpen(true);
