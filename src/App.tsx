@@ -7,7 +7,7 @@ import SettingsModal from './components/SettingsModal';
 import StatsPanel from './components/StatsPanel';
 import BottomPanel from './components/BottomPanel';
 import EvalMovePanel from './components/EvalMovePanel';
-import { Pause, Play, Settings, Square } from 'lucide-react';
+import { Pause, Play, Settings, Square, Lock, Unlock } from 'lucide-react';
 import {
   GameUpdate,
   EngineStats,
@@ -80,6 +80,10 @@ function App() {
   const [isPaused, setIsPaused] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'general' | 'engines' | 'tournaments'>('engines');
 
+  // Active Game Switcher & Auto-Follow
+  const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
+  const [autoFollow, setAutoFollow] = useState(true);
+
   // Preferences
   const [prefHighlight, setPrefHighlight] = useState(localStorage.getItem('pref_highlight_legal') === 'true');
   const [prefArrows, setPrefArrows] = useState(localStorage.getItem('pref_show_arrows') !== 'false');
@@ -123,41 +127,56 @@ function App() {
     // Listeners
     const unlistenGame = listen<GameUpdate>('game-update', (event) => {
         const payload = event.payload;
-        setGameUpdate(event.payload);
-        gameUpdateRef.current = payload;
-        setFen(payload.fen);
-        if (payload.game_id !== lastGameIdRef.current) {
-            lastGameIdRef.current = payload.game_id;
-            lastAppliedMoveRef.current = null;
-            const initialFen = payload.last_move ? "start" : payload.fen;
-            chessRef.current = new Chess(initialFen === "start" ? undefined : initialFen);
-            setMoves([]);
-            setEvalHistory([]);
-        }
-        if (payload.last_move) {
-            // Parse uci move string to [from, to] for chessground
-            const m = payload.last_move;
-            setLastMove([m.substring(0,2), m.substring(2,4)]);
-            if (lastAppliedMoveRef.current !== m) {
-                const from = m.substring(0, 2);
-                const to = m.substring(2, 4);
-                const promotion = m.length > 4 ? m.substring(4) : undefined;
-                try {
-                    const moveResult = chessRef.current.move({ from, to, promotion });
-                    if (moveResult?.san) {
-                        setMoves(prev => [...prev, moveResult.san]);
-                        lastAppliedMoveRef.current = m;
-                    } else {
-                        chessRef.current = new Chess(payload.fen === "start" ? undefined : payload.fen);
-                    }
-                } catch (error) {
-                    console.warn("Frontend chess.js validation failed:", error);
-                    chessRef.current = new Chess(payload.fen === "start" ? undefined : payload.fen);
-                }
-            }
-        }
-    });
 
+        // Auto-follow logic: If a new game comes in and autoFollow is true, switch to it.
+        // Otherwise, only update if the payload matches the selectedGameId.
+        setAutoFollow((prevAutoFollow) => {
+            setSelectedGameId((prevSelectedGameId) => {
+                const shouldUpdate = prevAutoFollow || prevSelectedGameId === payload.game_id;
+
+                if (shouldUpdate) {
+                    setGameUpdate(payload);
+                    gameUpdateRef.current = payload;
+                    setFen(payload.fen);
+
+                    if (payload.game_id !== lastGameIdRef.current) {
+                        lastGameIdRef.current = payload.game_id;
+                        lastAppliedMoveRef.current = null;
+                        const initialFen = payload.last_move ? "start" : payload.fen;
+                        chessRef.current = new Chess(initialFen === "start" ? undefined : initialFen);
+                        setMoves([]);
+                        setEvalHistory([]);
+                    }
+
+                    if (payload.last_move) {
+                        const m = payload.last_move;
+                        setLastMove([m.substring(0,2), m.substring(2,4)]);
+                        if (lastAppliedMoveRef.current !== m) {
+                            const from = m.substring(0, 2);
+                            const to = m.substring(2, 4);
+                            const promotion = m.length > 4 ? m.substring(4) : undefined;
+                            try {
+                                const moveResult = chessRef.current.move({ from, to, promotion });
+                                if (moveResult?.san) {
+                                    setMoves(prev => [...prev, moveResult.san]);
+                                    lastAppliedMoveRef.current = m;
+                                } else {
+                                    chessRef.current = new Chess(payload.fen === "start" ? undefined : payload.fen);
+                                }
+                            } catch (error) {
+                                console.warn("Frontend chess.js validation failed:", error);
+                                chessRef.current = new Chess(payload.fen === "start" ? undefined : payload.fen);
+                            }
+                        }
+                    }
+
+                    return payload.game_id; // update selected game ID if auto following
+                }
+                return prevSelectedGameId;
+            });
+            return prevAutoFollow;
+        });
+    });
     const unlistenStats = listen<EngineStats>('engine-stats', (event) => {
         const now = Date.now();
         if (now - lastStatsUpdateRef.current > 100) {
@@ -168,23 +187,29 @@ function App() {
             // Simplified: The backend sends stats. In `arbiter.rs`, we know engine indices.
             // We need to map `event.payload.engine_idx` to white/black.
             // For now, rely on `gameUpdate` having indices.
-            setGameUpdate(curr => {
-                if (!curr) return null;
-                if (event.payload.engine_idx === curr.white_engine_idx) setWhiteStats(event.payload);
-                if (event.payload.engine_idx === curr.black_engine_idx) setBlackStats(event.payload);
-                return curr;
-            });
-            const activeGame = gameUpdateRef.current;
-            if (activeGame && event.payload.game_id === activeGame.game_id) {
-                const activeColor = activeGame.fen.split(' ')[1] === 'w' ? 'white' : 'black';
-                const activeEngineIdx = activeColor === 'white' ? activeGame.white_engine_idx : activeGame.black_engine_idx;
-                if (event.payload.engine_idx === activeEngineIdx) {
-                    const score = event.payload.score_mate !== null && event.payload.score_mate !== undefined
-                        ? Math.sign(event.payload.score_mate) * 99
-                        : (event.payload.score_cp || 0) / 100;
-                    setEvalHistory(prev => [...prev.slice(-99), score]);
+            setSelectedGameId((prevSelectedGameId) => {
+                const shouldProcess = autoFollow || prevSelectedGameId === event.payload.game_id;
+                if (shouldProcess) {
+                    setGameUpdate(curr => {
+                        if (!curr || curr.game_id !== event.payload.game_id) return curr;
+                        if (event.payload.engine_idx === curr.white_engine_idx) setWhiteStats(event.payload);
+                        if (event.payload.engine_idx === curr.black_engine_idx) setBlackStats(event.payload);
+                        return curr;
+                    });
+                    const activeGame = gameUpdateRef.current;
+                    if (activeGame && event.payload.game_id === activeGame.game_id) {
+                        const activeColor = activeGame.fen.split(' ')[1] === 'w' ? 'white' : 'black';
+                        const activeEngineIdx = activeColor === 'white' ? activeGame.white_engine_idx : activeGame.black_engine_idx;
+                        if (event.payload.engine_idx === activeEngineIdx) {
+                            const score = event.payload.score_mate !== null && event.payload.score_mate !== undefined
+                                ? Math.sign(event.payload.score_mate) * 99
+                                : (event.payload.score_cp || 0) / 100;
+                            setEvalHistory(prev => [...prev.slice(-99), score]);
+                        }
+                    }
                 }
-            }
+                return prevSelectedGameId;
+            });
         }
     });
 
@@ -344,6 +369,8 @@ function App() {
 
   const effectiveActiveColor = isGameRunning ? rawActiveColor : undefined;
 
+  const inProgressGames = schedule.filter(g => g.state === 'InProgress');
+
   return (
     <div className="flex h-screen w-screen bg-gray-900 text-white overflow-hidden font-sans">
         {/* Settings Modal */}
@@ -363,9 +390,44 @@ function App() {
         <div className="flex flex-col w-full h-full">
             {/* Top Toolbar */}
             <div className="h-12 bg-gray-800 border-b border-gray-700 flex items-center px-4 justify-between shrink-0">
-                <div className="font-bold text-xl flex items-center gap-2">
-                    <span className="text-blue-500">CCRL</span> GUI
+                <div className="flex items-center gap-4">
+                    <div className="font-bold text-xl flex items-center gap-2">
+                        <span className="text-blue-500">CCRL</span> GUI
+                    </div>
+
+                    {matchActive && inProgressGames.length > 0 && (
+                        <div className="flex items-center gap-2 ml-4">
+                            <select
+                                className="bg-gray-700 border border-gray-600 text-sm text-gray-200 rounded px-2 py-1 outline-none"
+                                value={selectedGameId || ''}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val) {
+                                        setSelectedGameId(parseInt(val));
+                                        setAutoFollow(false);
+                                    }
+                                }}
+                            >
+                                <option value="" disabled>Select a Game</option>
+                                {inProgressGames.map(game => (
+                                    <option key={game.id} value={game.id}>
+                                        Game {game.id}: {game.white_name} vs {game.black_name}
+                                    </option>
+                                ))}
+                            </select>
+
+                            <button
+                                onClick={() => setAutoFollow(!autoFollow)}
+                                className={`p-1.5 rounded flex items-center gap-1 transition-colors ${autoFollow ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-400'}`}
+                                title={autoFollow ? "Auto-Follow: ON" : "Auto-Follow: OFF"}
+                            >
+                                {autoFollow ? <Lock size={16} /> : <Unlock size={16} />}
+                                <span className="text-xs font-bold">{autoFollow ? 'ON' : 'OFF'}</span>
+                            </button>
+                        </div>
+                    )}
                 </div>
+
                 <div className="flex gap-2">
                     {matchActive && (
                         <>
