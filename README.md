@@ -29,12 +29,13 @@ CCRL GUI is a lightweight tournament manager for chess engines, built with Tauri
 ### 1. Setup Engines
 - Click the **Settings** (gear icon) in the top toolbar.
 - Go to the **Engines** tab.
-- Click **Add Engine** to select an executable.
-- Click the **Configure** (gear) button on an engine to detect and modify UCI options.
+- Click **Add Engine** to select an executable. You can use the `...` **Browse** button to quickly find cross-platform executables on your file system without extension restrictions.
+- Click the **Settings** (gear) button next to an engine's delete icon to explicitly add, edit, or remove custom key-value UCI options for that specific engine.
+- Use the **Checkbox** on the left of each engine to quickly enable or disable it from participating in the upcoming tournament without having to delete the engine configuration.
 
 ### 2. Configure Tournament
 - In **Settings > Games**, configure Adjudication rules and Opening Suites.
-- In the main view, click **Start Match**.
+- In the main view, click **Start Match**. Only engines with their checkbox enabled in the Settings modal will participate in the match.
 
 ### 3. Run
 - The app displays the **Live Board** on the left and **Stats Panel** on the right.

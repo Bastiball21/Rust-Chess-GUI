@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, Plus, Trash2, FileText, MoreHorizontal, Clock, Cpu, Shield, BookOpen } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Plus, Trash2, FileText, MoreHorizontal, Clock, Cpu, Shield, BookOpen, Settings } from 'lucide-react';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { EngineConfig, AdjudicationConfig, OpeningConfig, TournamentSettings } from '../types';
 
@@ -32,11 +32,12 @@ export default function SettingsModal({
   tournamentSettings,
   onUpdateTournamentSettings,
 }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = React.useState(initialTab);
-  const [highlightLegal, setHighlightLegal] = React.useState(localStorage.getItem('pref_highlight_legal') === 'true');
-  const [showArrows, setShowArrows] = React.useState(localStorage.getItem('pref_show_arrows') !== 'false');
+  const [activeTab, setActiveTab] = useState(initialTab);
+  const [expandedEngineIdx, setExpandedEngineIdx] = useState<number | null>(null);
+  const [highlightLegal, setHighlightLegal] = useState(localStorage.getItem('pref_highlight_legal') === 'true');
+  const [showArrows, setShowArrows] = useState(localStorage.getItem('pref_show_arrows') !== 'false');
 
-  React.useEffect(() => {
+  useEffect(() => {
       if (isOpen) setActiveTab(initialTab);
   }, [isOpen, initialTab]);
 
@@ -78,6 +79,21 @@ export default function SettingsModal({
       }
     } catch (err) {
       console.error('Failed to open save dialog:', err);
+    }
+  };
+
+  const handleBrowseEnginePath = async (index: number) => {
+    try {
+      const selected = await open({
+        title: 'Select Engine Executable',
+        multiple: false,
+      });
+
+      if (selected && typeof selected === 'string') {
+        handleEngineChange(index, 'path', selected);
+      }
+    } catch (err) {
+      console.error('Failed to open engine file dialog:', err);
     }
   };
 
@@ -175,9 +191,27 @@ export default function SettingsModal({
           {/* --- ENGINES TAB --- */}
           {activeTab === 'engines' && (
             <div className="space-y-4">
-              {engines.map((engine, idx) => (
-                <div key={engine.id || idx} className="bg-[#1e1e1e] p-4 rounded border border-[#333] space-y-3">
-                  <div className="flex gap-2">
+              {engines.map((engine, idx) => {
+                const disabledIds = tournamentSettings.disabledEngineIds || [];
+                const engineId = engine.id || `temp-id-${idx}`;
+                const isEnabled = !disabledIds.includes(engineId);
+                return (
+                <div key={engineId} className={`p-4 rounded border transition-colors space-y-3 ${isEnabled ? 'bg-[#1e1e1e] border-[#333]' : 'bg-[#151515] border-[#222] opacity-60'}`}>
+                  <div className="flex gap-2 items-start">
+                    <div className="pt-6">
+                        <input
+                            type="checkbox"
+                            checked={isEnabled}
+                            onChange={(e) => {
+                                const newDisabledIds = e.target.checked
+                                    ? disabledIds.filter(id => id !== engineId)
+                                    : [...disabledIds, engineId];
+                                onUpdateTournamentSettings({...tournamentSettings, disabledEngineIds: newDisabledIds});
+                            }}
+                            className="w-4 h-4 rounded bg-[#111] border-[#333] cursor-pointer"
+                            title={isEnabled ? "Disable engine for tournament" : "Enable engine for tournament"}
+                        />
+                    </div>
                     <div className="flex-1">
                       <label className="block text-xs font-bold text-gray-500 mb-1">Name</label>
                       <input
@@ -188,20 +222,86 @@ export default function SettingsModal({
                     </div>
                     <div className="flex-[2]">
                       <label className="block text-xs font-bold text-gray-500 mb-1">Executable Path</label>
-                      <input
-                        className="w-full bg-[#111] border border-[#333] rounded px-2 py-1 text-sm text-gray-300 font-mono focus:border-blue-500 outline-none"
-                        value={engine.path}
-                        onChange={(e) => handleEngineChange(idx, 'path', e.target.value)}
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 text-sm text-gray-300 font-mono focus:border-blue-500 outline-none"
+                          value={engine.path}
+                          onChange={(e) => handleEngineChange(idx, 'path', e.target.value)}
+                          placeholder="Select or type path..."
+                        />
+                        <button
+                          onClick={() => handleBrowseEnginePath(idx)}
+                          className="bg-[#333] hover:bg-[#444] text-gray-200 px-2 rounded border border-[#444] transition-colors flex items-center justify-center"
+                          title="Browse..."
+                        >
+                          <MoreHorizontal size={18} />
+                        </button>
+                      </div>
                     </div>
-                    <div className="pt-5">
+                    <div className="pt-5 flex gap-1">
+                       <button
+                         onClick={() => setExpandedEngineIdx(expandedEngineIdx === idx ? null : idx)}
+                         className={`p-1 rounded transition ${expandedEngineIdx === idx ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:bg-[#333]'}`}
+                         title="Engine Options"
+                       >
+                         <Settings size={18} />
+                       </button>
                        <button onClick={() => removeEngine(idx)} className="text-red-500 hover:bg-red-500/10 p-1 rounded transition">
                          <Trash2 size={18} />
                        </button>
                     </div>
                   </div>
+                  {expandedEngineIdx === idx && (
+                    <div className="mt-4 pt-4 border-t border-[#333]">
+                      <h4 className="text-xs font-bold text-gray-500 mb-2">Custom Engine Options (Key=Value)</h4>
+                      <div className="space-y-2">
+                        {engine.options?.map((opt, optIdx) => (
+                          <div key={optIdx} className="flex gap-2">
+                            <input
+                              className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 text-sm text-gray-300 font-mono focus:border-blue-500 outline-none"
+                              placeholder="Option Name"
+                              value={opt[0]}
+                              onChange={(e) => {
+                                const newOptions = [...(engine.options || [])];
+                                newOptions[optIdx] = [e.target.value, opt[1]];
+                                handleEngineChange(idx, 'options', newOptions as any);
+                              }}
+                            />
+                            <input
+                              className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 text-sm text-gray-300 font-mono focus:border-blue-500 outline-none"
+                              placeholder="Value"
+                              value={opt[1]}
+                              onChange={(e) => {
+                                const newOptions = [...(engine.options || [])];
+                                newOptions[optIdx] = [opt[0], e.target.value];
+                                handleEngineChange(idx, 'options', newOptions as any);
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                const newOptions = (engine.options || []).filter((_, i) => i !== optIdx);
+                                handleEngineChange(idx, 'options', newOptions as any);
+                              }}
+                              className="text-red-500 hover:bg-red-500/10 p-1 rounded transition"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => {
+                            const newOptions = [...(engine.options || []), ['', '']];
+                            handleEngineChange(idx, 'options', newOptions as any);
+                          }}
+                          className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mt-2"
+                        >
+                          <Plus size={14} /> Add Option
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
+              )})}
               <button
                 onClick={addEngine}
                 className="w-full py-2 border-2 border-dashed border-[#444] text-gray-400 hover:border-blue-500 hover:text-blue-400 rounded flex items-center justify-center gap-2 font-bold transition-all"
