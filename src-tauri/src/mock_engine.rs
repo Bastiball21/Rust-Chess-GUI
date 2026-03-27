@@ -39,7 +39,6 @@ fn main() {
                     // For "startpos moves e2e4", black to move. e7e5 is valid.
                     // To be smarter without a chess library, we can check the 'position' command string.
 
-                    let mut is_black = false;
                     // Check if 'position' command was sent previously? No, we need to store state.
                     // But here we process line by line.
                     // Actually, 'go' comes after 'position'.
