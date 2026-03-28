@@ -136,10 +136,27 @@ impl TournamentStats {
         if p <= 0.0 || p >= 1.0 {
             if p <= 0.0 { self.elo_diff = -1000.0; }
             if p >= 1.0 { self.elo_diff = 1000.0; }
+            self.error_margin = 0.0;
         } else {
             self.elo_diff = -400.0 * (1.0 / p - 1.0).log10();
+
+            // Calculate Variance of Score
+            // E[X^2] = (1^2 * W + 0.5^2 * D + 0^2 * L) / N
+            let ex2 = (self.wins as f64 + 0.25 * self.draws as f64) / self.total_games as f64;
+            // Var(X) = E[X^2] - (E[X])^2
+            let var_x = ex2 - p * p;
+
+            // Standard Error of Mean Score
+            let se_p = (var_x / self.total_games as f64).sqrt();
+
+            // Derivative of Elo function with respect to p
+            // d(Elo)/dp = 400 / (ln(10) * p * (1-p))
+            let slope = 400.0 / (std::f64::consts::LN_10 * p * (1.0 - p));
+
+            // 95% Confidence Interval Margin
+            self.error_margin = 1.96 * se_p * slope;
         }
-        self.error_margin = 800.0 / (self.total_games as f64).sqrt();
+
         if !self.sprt_enabled {
             self.sprt_status = format!("Elo: {:.1} +/- {:.1} (95%)", self.elo_diff, self.error_margin);
         }
@@ -260,4 +277,79 @@ pub fn calculate_standings(schedule: &[crate::types::ScheduledGame], engines: &[
     }
 
     entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_elo_calculation_balanced_draws() {
+        let mut stats = TournamentStats::default();
+        stats.total_games = 100;
+        stats.wins = 0;
+        stats.losses = 0;
+        stats.draws = 100;
+
+        stats.calculate_elo();
+
+        assert_eq!(stats.elo_diff, 0.0);
+        assert_eq!(stats.error_margin, 0.0);
+    }
+
+    #[test]
+    fn test_elo_calculation_decisive_split() {
+        let mut stats = TournamentStats::default();
+        stats.total_games = 100;
+        stats.wins = 50;
+        stats.losses = 50;
+        stats.draws = 0;
+        // p = 0.5.
+        // ex2 = (50 + 0) / 100 = 0.5
+        // var_x = 0.5 - 0.25 = 0.25
+        // se_p = sqrt(0.25/100) = 0.5/10 = 0.05
+        // slope = 400 / (ln(10) * 0.25) = 400 / (2.302585 * 0.25) = 400 / 0.5756 = 694.87
+        // margin = 1.96 * 0.05 * 694.87 = 68.09
+
+        stats.calculate_elo();
+        assert_eq!(stats.elo_diff, 0.0);
+        assert!((stats.error_margin - 68.1).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_elo_calculation_advantage() {
+        let mut stats = TournamentStats::default();
+        stats.total_games = 100;
+        stats.wins = 60;
+        stats.losses = 20;
+        stats.draws = 20;
+        // score = 60 + 10 = 70. p = 0.7.
+        // elo = -400 * log10(1/0.7 - 1) = -400 * log10(0.428) = -400 * -0.368 = 147.3
+
+        // ex2 = (60 + 0.25*20) / 100 = 65 / 100 = 0.65
+        // var_x = 0.65 - 0.49 = 0.16
+        // se_p = sqrt(0.16/100) = 0.4 / 10 = 0.04
+        // slope = 400 / (ln(10) * 0.7 * 0.3) = 400 / (2.3026 * 0.21) = 400 / 0.4835 = 827.2
+        // margin = 1.96 * 0.04 * 827.2 = 64.85
+
+        stats.calculate_elo();
+        assert!((stats.elo_diff - 147.3).abs() < 1.0);
+        assert!((stats.error_margin - 64.85).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_elo_edge_cases() {
+         let mut stats = TournamentStats::default();
+         stats.total_games = 10;
+         stats.wins = 10;
+         stats.calculate_elo();
+         assert_eq!(stats.elo_diff, 1000.0);
+         assert_eq!(stats.error_margin, 0.0);
+
+         stats.wins = 0;
+         stats.losses = 10;
+         stats.calculate_elo();
+         assert_eq!(stats.elo_diff, -1000.0);
+         assert_eq!(stats.error_margin, 0.0);
+    }
 }
