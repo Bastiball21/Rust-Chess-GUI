@@ -1,6 +1,8 @@
 # CCRL GUI
 
-CCRL GUI is a lightweight tournament manager for chess engines, built with Tauri (Rust) and React (TypeScript). It allows you to run matches and tournaments between UCI-compatible chess engines with a modern, dark-mode UI.
+CCRL GUI (Computer Chess Rating List GUI) is a lightweight tournament manager for chess engines, built with Tauri (Rust) and React (TypeScript). It allows you to run matches and tournaments between UCI-compatible chess engines with a modern, dark-mode UI.
+
+This release marks the debut of the CCRL GUI, which is intended to become the default GUI for CCRL testing in the future.
 
 ## Features
 
